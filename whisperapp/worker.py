@@ -2,6 +2,7 @@ import threading
 import time
 from pathlib import Path
 import whisperx
+from whisperx.diarize import DiarizationPipeline
 from whisperapp.queue import JobQueue, JobStatus
 from whisperapp.checkpoints import CheckpointManager
 
@@ -42,7 +43,7 @@ class Worker:
                 model = whisperx.load_model(job["model"], device="cpu",
                                              compute_type="float32")
                 audio = whisperx.load_audio(job["file_path"])
-                result = whisperx.transcribe(model, audio, batch_size=8)
+                result = model.transcribe(audio, batch_size=8)
                 cm.save("transcription", result)
                 del model
             else:
@@ -70,8 +71,8 @@ class Worker:
             # --- Stage 3: Diarization ---
             if job["diarize"] and not cm.has("diarization"):
                 self.queue.update_progress(job_id, 65, "diarizing")
-                diarize_model = whisperx.DiarizationPipeline(
-                    use_auth_token=self.hf_token, device="cpu")
+                diarize_model = DiarizationPipeline(
+                    token=self.hf_token, device="cpu")
                 diarize_segments = diarize_model(job["file_path"])
                 result_diarized = whisperx.assign_word_speakers(
                     diarize_segments, aligned)

@@ -20,32 +20,36 @@ def setup(tmp_path):
 @patch("whisperapp.worker.whisperx")
 def test_worker_marks_job_running(mock_wx, setup):
     q, job_id, tmp_path = setup
-    mock_wx.load_model.return_value = MagicMock()
+    mock_model = MagicMock()
+    mock_model.transcribe.return_value = {"segments": [], "language": "en"}
+    mock_wx.load_model.return_value = mock_model
     mock_wx.load_audio.return_value = MagicMock()
-    mock_wx.transcribe.return_value = {"segments": [], "language": "en"}
     mock_wx.load_align_model.return_value = (MagicMock(), MagicMock())
     mock_wx.align.return_value = {"segments": []}
-    mock_wx.DiarizationPipeline.return_value = MagicMock(return_value=MagicMock())
     mock_wx.assign_word_speakers.return_value = {"segments": []}
 
-    worker = Worker(queue=q, hf_token="hf_test", config_dir=tmp_path)
-    worker.process_job(job_id)
+    with patch("whisperapp.worker.DiarizationPipeline") as mock_dp:
+        mock_dp.return_value = MagicMock(return_value=MagicMock())
+        worker = Worker(queue=q, hf_token="hf_test", config_dir=tmp_path)
+        worker.process_job(job_id)
     job = q.get_job(job_id)
     assert job["status"] in (JobStatus.DONE, JobStatus.SPEAKER_REVIEW)
 
 @patch("whisperapp.worker.whisperx")
 def test_worker_saves_checkpoints(mock_wx, setup):
     q, job_id, tmp_path = setup
-    mock_wx.load_model.return_value = MagicMock()
+    mock_model = MagicMock()
+    mock_model.transcribe.return_value = {"segments": [], "language": "en"}
+    mock_wx.load_model.return_value = mock_model
     mock_wx.load_audio.return_value = MagicMock()
-    mock_wx.transcribe.return_value = {"segments": [], "language": "en"}
     mock_wx.load_align_model.return_value = (MagicMock(), MagicMock())
     mock_wx.align.return_value = {"segments": []}
-    mock_wx.DiarizationPipeline.return_value = MagicMock(return_value=MagicMock())
     mock_wx.assign_word_speakers.return_value = {"segments": []}
 
-    worker = Worker(queue=q, hf_token="hf_test", config_dir=tmp_path)
-    worker.process_job(job_id)
+    with patch("whisperapp.worker.DiarizationPipeline") as mock_dp:
+        mock_dp.return_value = MagicMock(return_value=MagicMock())
+        worker = Worker(queue=q, hf_token="hf_test", config_dir=tmp_path)
+        worker.process_job(job_id)
     partial_dir = tmp_path / "out" / ".whisperapp_partials" / job_id
     assert (partial_dir / "transcription.json").exists()
     assert (partial_dir / "alignment.json").exists()
