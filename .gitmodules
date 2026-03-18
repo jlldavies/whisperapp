@@ -1,0 +1,3 @@
+[submodule "whisper_webui"]
+	path = whisper_webui
+	url = https://github.com/jhj0517/Whisper-WebUI.git

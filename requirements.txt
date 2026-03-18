@@ -1,0 +1,13 @@
+whisperx
+pyannote.audio
+gradio>=4.0
+fastapi
+uvicorn[standard]
+pystray
+Pillow
+bleach
+httpx
+pytest
+pytest-asyncio
+click
+requests
