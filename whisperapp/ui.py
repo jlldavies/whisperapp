@@ -68,4 +68,38 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
             outputs=status_out
         )
 
+        with gr.Tab("Settings"):
+            from whisperapp.config import Config
+            cfg = Config()
+            hf_token_input = gr.Textbox(
+                label="HuggingFace Token",
+                value=cfg.hf_token,
+                type="password")
+            default_model = gr.Dropdown(
+                choices=["tiny","base","small","medium","large-v2"],
+                value=cfg.default_model, label="Default Model")
+            startup_check = gr.Checkbox(
+                label="Start on login", value=True)
+            save_btn = gr.Button("Save Settings")
+
+            def save_settings(token, model, startup):
+                from whisperapp.config import Config as Cfg
+                from whisperapp.startup import register_startup, unregister_startup
+                c = Cfg()
+                c.hf_token = token
+                c.default_model = model
+                c.save()
+                if startup:
+                    register_startup()
+                else:
+                    unregister_startup()
+                return "Settings saved"
+
+            settings_out = gr.Textbox(label="", interactive=False)
+            save_btn.click(
+                fn=save_settings,
+                inputs=[hf_token_input, default_model, startup_check],
+                outputs=settings_out
+            )
+
     return demo
