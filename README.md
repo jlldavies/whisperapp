@@ -14,6 +14,7 @@ Local audio/video transcription with speaker diarization, powered by [WhisperX](
 - **CLI** — `whisperapp transcribe`, `whisperapp list`, `whisperapp status`
 - **System tray** — runs in the background, double-click to open the UI
 - **Auto-updater** — upgrades WhisperX and dependencies on startup
+- **Live transcription** — stream from your microphone with real-time text output
 - **Cross-platform** — Windows and macOS (system startup registration for both)
 
 ## Quick Start
@@ -52,8 +53,9 @@ whisperapp/
 ├── worker.py        # WhisperX processing pipeline
 ├── formatters.py    # Output formatters (txt/srt/vtt/json/tsv)
 ├── speakers.py      # Speaker snippet extraction and renaming
+├── streaming.py     # Real-time streaming engine (faster-whisper + Silero VAD)
 ├── server.py        # FastAPI REST/MCP server (port 7861)
-├── ui.py            # Gradio web UI (port 7860)
+├── ui.py            # Gradio web UI (port 7860) — Transcribe + Live tabs
 ├── tray.py          # System tray icon
 ├── cli.py           # CLI commands
 ├── updater.py       # Auto-updater
@@ -87,6 +89,44 @@ whisperapp cancel <job-id>
 whisperapp get <job-id> -f txt
 ```
 
+## Live Transcription
+
+Open the **Live** tab in the web UI and click the microphone to start streaming. Transcription appears in real-time using a lightweight model (`base` by default).
+
+- **Model**: choose `tiny`, `base`, or `small` for streaming (smaller = faster)
+- **Stop & Save**: stops recording and writes output files
+- **Polish**: runs WhisperX alignment + speaker diarization on the full recording (requires HF token)
+
+The streaming engine uses Silero VAD for speech boundary detection and faster-whisper for chunk-based inference.
+
+### Streaming REST API
+
+```bash
+# Start a streaming session
+curl -X POST http://127.0.0.1:7861/stream/start \
+  -H "Content-Type: application/json" \
+  -d '{"model": "base"}'
+# → {"session_id": "..."}
+
+# Send audio chunks (base64-encoded float32 PCM)
+curl -X POST http://127.0.0.1:7861/stream/chunk \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "...", "audio_b64": "..."}'
+# → {"new_text": "Hello", "transcript": "Hello world"}
+
+# Stop and get final transcript
+curl -X POST http://127.0.0.1:7861/stream/stop \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "..."}'
+# → {"text": "...", "segments": [...]}
+
+# Optional: Polish with alignment + diarization
+curl -X POST http://127.0.0.1:7861/stream/polish \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "...", "hf_token": "hf_xxx"}'
+# → {"segments": [...]}
+```
+
 ## API Examples
 
 ```bash
@@ -109,10 +149,13 @@ curl http://127.0.0.1:7861/jobs/<job-id>/transcript?format=txt
 
 ```bash
 # Unit tests (fast, no GPU or HF token needed)
-pytest tests/ -v --ignore=tests/test_integration.py
+pytest tests/ -v --ignore=tests/test_integration.py --ignore=tests/test_streaming_integration.py
 
 # Integration tests (downloads models, needs HF token)
 HF_TOKEN=hf_xxx pytest tests/test_integration.py -v -m integration
+
+# Streaming integration tests
+pytest tests/test_streaming_integration.py -v -m integration
 
 # All tests
 pytest tests/ -v

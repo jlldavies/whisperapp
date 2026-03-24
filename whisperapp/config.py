@@ -15,6 +15,9 @@ class Config:
     default_model: str = "large-v2"
     default_output_path: str = ""
     diarize_by_default: bool = True
+    streaming_model: str = "base"
+    vad_silence_threshold: float = 0.6
+    streaming_max_chunk_sec: float = 10.0
 
     def __post_init__(self):
         if not self.default_output_path:
