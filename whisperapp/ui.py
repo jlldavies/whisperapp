@@ -27,106 +27,88 @@ def get_queue_status(queue):
     return "\n".join(rows)
 
 
-def on_audio_chunk(audio_tuple, state):
-    """Handle a streaming audio chunk from the microphone.
+def _list_input_devices():
+    """Return dict of {display_name: device_index} for audio input devices."""
+    import pyaudio
+    p = pyaudio.PyAudio()
+    devices = {}
+    seen = set()
+    for i in range(p.get_device_count()):
+        info = p.get_device_info_by_index(i)
+        if info["maxInputChannels"] > 0:
+            name = info["name"]
+            # Deduplicate by name, prefer higher sample rate
+            if name not in seen:
+                seen.add(name)
+                sr = int(info["defaultSampleRate"])
+                label = f"{name} ({sr}Hz)"
+                devices[label] = (i, sr, info["maxInputChannels"])
+    p.terminate()
+    return devices
 
-    *audio_tuple* is (sample_rate, np.ndarray) from Gradio streaming audio.
-    *state* is a dict carrying the StreamingEngine across calls.
-    """
-    if audio_tuple is None:
-        return state.get("transcript", ""), state
 
-    sr, audio_array = audio_tuple
+# Global capture state shared between UI callbacks and capture thread
+_capture_lock = None
+_capture_thread = None
+_capture_running = False
+_capture_engine = None
+_capture_transcript = ""
 
-    # Lazy-init engine on first chunk
-    if "engine" not in state:
-        from whisperapp.config import Config
-        cfg = Config()
-        from whisperapp.streaming import StreamingEngine
-        state["engine"] = StreamingEngine(
-            model_size=cfg.streaming_model,
-            max_chunk_sec=cfg.streaming_max_chunk_sec,
-            silence_threshold_sec=cfg.vad_silence_threshold,
-        )
-        state["engine"].start()
-        state["transcript"] = ""
 
+def _capture_loop(device_index, sample_rate, channels, model_size, max_chunk_sec, vad_threshold):
+    """Background thread: capture audio from PyAudio device and feed to StreamingEngine."""
+    import pyaudio
     import numpy as np
-    audio_array = audio_array.astype(np.float32)
-    # Normalise int16 range to [-1, 1] if needed
-    if audio_array.max() > 1.0 or audio_array.min() < -1.0:
-        audio_array = audio_array / 32768.0
+    import logging
+    global _capture_running, _capture_engine, _capture_transcript
 
-    new_text = state["engine"].process_chunk(sr, audio_array)
-    if new_text:
-        state["transcript"] = state["engine"].get_transcript()
+    log = logging.getLogger("whisperapp.live")
+    from whisperapp.streaming import StreamingEngine
 
-    return state.get("transcript", ""), state
+    engine = StreamingEngine(
+        model_size=model_size,
+        max_chunk_sec=max_chunk_sec,
+        silence_threshold_sec=vad_threshold,
+    )
+    engine.start()
+    _capture_engine = engine
 
+    p = pyaudio.PyAudio()
+    chunk_samples = int(sample_rate * 0.5)  # 500ms chunks
 
-def on_stop_save(state, output_path, formats):
-    """Stop streaming and save the transcript."""
-    engine = state.get("engine")
-    if engine is None:
-        return "No active session.", state
-
-    result = engine.stop()
-    text = result["text"]
-
-    if not text.strip():
-        return "No speech detected.", state
-
-    # Save using formatters
-    from whisperapp.formatters import write_formats
-    from whisperapp.sanitise import sanitise_output_path as sop
     try:
-        out_dir = sop(output_path or str(Path.home() / "Downloads"))
-    except ValueError as e:
-        return f"Error: {e}", state
+        stream = p.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=sample_rate,
+            input=True,
+            input_device_index=device_index,
+            frames_per_buffer=chunk_samples,
+        )
+        log.warning("Capture started: device=%d sr=%d", device_index, sample_rate)
 
-    # Build a WhisperX-compatible result dict for formatters
-    fmt_result = {"segments": result["segments"]}
-    fmt_list = formats if formats else ["txt"]
-    write_formats(fmt_result, "live_recording", str(out_dir), fmt_list)
+        while _capture_running:
+            data = stream.read(chunk_samples, exception_on_overflow=False)
+            audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            log.warning("CAPTURE: samples=%d min=%.4f max=%.4f", len(audio), audio.min(), audio.max())
 
-    # Store result for potential Polish step
-    state["last_result"] = result
-    state["output_path"] = str(out_dir)
-    state["formats"] = fmt_list
+            new_text = engine.process_chunk(sample_rate, audio)
+            if new_text:
+                # Each utterance on a new line for visual speaker separation
+                if _capture_transcript:
+                    _capture_transcript += "\n" + new_text.strip()
+                else:
+                    _capture_transcript = new_text.strip()
 
-    return f"Saved to {out_dir}", state
+        stream.stop_stream()
+        stream.close()
+    except Exception as e:
+        log.error("Capture error: %s", e)
+    finally:
+        p.terminate()
+        log.warning("Capture stopped")
 
 
-def on_polish(state):
-    """Run WhisperX alignment + diarization on the recorded audio."""
-    engine = state.get("engine")
-    if engine is None:
-        return "No active session.", state
-
-    from whisperapp.config import Config
-    cfg = Config()
-    if not cfg.hf_token:
-        return "HuggingFace token required for Polish (set in Settings tab).", state
-
-    polished = engine.polish(cfg.hf_token)
-
-    # Update saved files if we have output info
-    if "output_path" in state:
-        from whisperapp.formatters import write_formats
-        fmt_list = state.get("formats", ["txt"])
-        write_formats(polished, "live_recording", state["output_path"], fmt_list)
-
-    # Build display text from polished segments
-    lines = []
-    for seg in polished.get("segments", []):
-        speaker = seg.get("speaker", "")
-        text = seg.get("text", "").strip()
-        prefix = f"[{speaker}] " if speaker else ""
-        lines.append(f"{prefix}{text}")
-
-    transcript = "\n".join(lines) if lines else "Polish produced no output."
-    state["transcript"] = transcript
-    return transcript, state
 
 
 def create_ui(queue: JobQueue, worker) -> gr.Blocks:
@@ -247,13 +229,26 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
             )
 
         with gr.Tab("Live"):
-            live_state = gr.State(value={})
+            # Build device list
+            devices = _list_input_devices()
+            device_names = list(devices.keys())
+            # Try to default to Wave Link Stream
+            default_device = next((n for n in device_names if "Wave Link Stream" in n), device_names[0] if device_names else "")
 
-            mic_input = gr.Audio(
-                sources=["microphone"],
-                streaming=True,
-                label="Microphone",
-            )
+            with gr.Row():
+                device_select = gr.Dropdown(
+                    choices=device_names,
+                    value=default_device,
+                    label="Audio Input Device",
+                    scale=3,
+                )
+                recording_indicator = gr.Textbox(
+                    value="",
+                    label="Status",
+                    interactive=False,
+                    scale=1,
+                )
+
             live_transcript = gr.Textbox(
                 label="Live Transcript",
                 lines=20,
@@ -277,27 +272,120 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
                 )
 
             with gr.Row():
-                stop_save_btn = gr.Button("Stop & Save", variant="primary")
+                start_btn = gr.Button("Start Recording", variant="primary")
+                stop_save_btn = gr.Button("Stop & Save", variant="stop")
+                clear_btn = gr.Button("Clear")
                 polish_btn = gr.Button("Polish (Align + Diarize)")
 
-            live_status = gr.Textbox(label="Status", interactive=False)
+            live_status = gr.Textbox(label="Info", interactive=False)
 
-            mic_input.stream(
-                fn=on_audio_chunk,
-                inputs=[mic_input, live_state],
-                outputs=[live_transcript, live_state],
+            # Poll timer to update transcript from capture thread
+            poll_timer = gr.Timer(value=1.0, active=False)
+
+            def start_capture(device_name, model):
+                import threading
+                global _capture_thread, _capture_running, _capture_transcript
+                if device_name not in devices:
+                    return "Device not found.", "", gr.Timer(active=False)
+                dev_idx, dev_sr, dev_ch = devices[device_name]
+
+                from whisperapp.config import Config
+                cfg = Config()
+
+                _capture_running = True
+                _capture_transcript = ""
+                _capture_thread = threading.Thread(
+                    target=_capture_loop,
+                    args=(dev_idx, dev_sr, dev_ch, model,
+                          cfg.streaming_max_chunk_sec, cfg.vad_silence_threshold),
+                    daemon=True,
+                )
+                _capture_thread.start()
+                return f"Recording from: {device_name}", "RECORDING", gr.Timer(active=True)
+
+            def poll_transcript():
+                import time
+                elapsed = ""
+                if _capture_running:
+                    elapsed = "RECORDING"
+                return _capture_transcript, elapsed
+
+            def clear_transcript():
+                global _capture_transcript, _capture_engine
+                _capture_transcript = ""
+                if _capture_engine:
+                    _capture_engine.reset()
+                return "", ""
+
+            def stop_and_save(output_path, formats):
+                global _capture_running, _capture_engine, _capture_transcript
+                _capture_running = False
+                if _capture_thread:
+                    _capture_thread.join(timeout=3)
+
+                if _capture_engine is None:
+                    return "No active session.", "", gr.Timer(active=False)
+
+                result = _capture_engine.stop()
+                text = result["text"]
+
+                if not text.strip():
+                    return "No speech detected.", "", gr.Timer(active=False)
+
+                from whisperapp.formatters import write_formats
+                from whisperapp.sanitise import sanitise_output_path as sop
+                try:
+                    out_dir = sop(output_path or str(Path.home() / "Downloads"))
+                except ValueError as e:
+                    return f"Error: {e}", "", gr.Timer(active=False)
+
+                fmt_result = {"segments": result["segments"]}
+                fmt_list = formats if formats else ["txt"]
+                write_formats(fmt_result, "live_recording", str(out_dir), fmt_list)
+                return f"Saved to {out_dir}", "", gr.Timer(active=False)
+
+            def do_polish():
+                global _capture_engine
+                if _capture_engine is None:
+                    return "No active session."
+                from whisperapp.config import Config
+                cfg = Config()
+                if not cfg.hf_token:
+                    return "HuggingFace token required (set in Settings tab)."
+                polished = _capture_engine.polish(cfg.hf_token)
+                lines = []
+                for seg in polished.get("segments", []):
+                    speaker = seg.get("speaker", "")
+                    text = seg.get("text", "").strip()
+                    prefix = f"[{speaker}] " if speaker else ""
+                    lines.append(f"{prefix}{text}")
+                return "\n".join(lines) if lines else "Polish produced no output."
+
+            start_btn.click(
+                fn=start_capture,
+                inputs=[device_select, live_model],
+                outputs=[live_status, recording_indicator, poll_timer],
+            )
+
+            poll_timer.tick(
+                fn=poll_transcript,
+                outputs=[live_transcript, recording_indicator],
             )
 
             stop_save_btn.click(
-                fn=on_stop_save,
-                inputs=[live_state, live_output_path, live_formats],
-                outputs=[live_status, live_state],
+                fn=stop_and_save,
+                inputs=[live_output_path, live_formats],
+                outputs=[live_status, recording_indicator, poll_timer],
+            )
+
+            clear_btn.click(
+                fn=clear_transcript,
+                outputs=[live_transcript, live_status],
             )
 
             polish_btn.click(
-                fn=on_polish,
-                inputs=[live_state],
-                outputs=[live_transcript, live_state],
+                fn=do_polish,
+                outputs=[live_transcript],
             )
 
         with gr.Tab("Settings"):

@@ -34,13 +34,19 @@ def _load_vad():
 
 
 def _speech_prob(audio_16k: np.ndarray) -> float:
-    """Return speech probability for a 16 kHz mono float32 chunk."""
+    """Return max speech probability across 512-sample windows at 16 kHz."""
     import torch
     vad = _load_vad()
-    tensor = torch.from_numpy(audio_16k).float()
-    if tensor.dim() == 0 or tensor.shape[0] == 0:
+    if audio_16k.shape[0] < 512:
         return 0.0
-    return float(vad(tensor, 16000))
+    max_prob = 0.0
+    # Silero VAD requires exactly 512 samples per call at 16 kHz
+    for i in range(0, len(audio_16k) - 511, 512):
+        window = torch.from_numpy(audio_16k[i:i + 512]).float()
+        prob = float(vad(window, 16000))
+        if prob > max_prob:
+            max_prob = prob
+    return max_prob
 
 
 # ---------------------------------------------------------------------------

@@ -23,9 +23,15 @@ def unregister_startup():
     elif sys.platform == "darwin":
         _unregister_macos()
 
+def _pythonw_path() -> str:
+    """Return pythonw.exe path for windowless startup on Windows."""
+    p = Path(_python_path())
+    pw = p.parent / "pythonw.exe"
+    return str(pw) if pw.exists() else str(p)
+
 def _register_windows():
     key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-    cmd = f'"{_python_path()}" -m whisperapp'
+    cmd = f'"{_pythonw_path()}" -m whisperapp'
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0,
                         winreg.KEY_SET_VALUE) as key:
         winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, cmd)

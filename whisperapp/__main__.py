@@ -9,8 +9,8 @@ from whisperapp.tray import TrayApp
 from whisperapp.updater import run_update
 
 def main():
-    # Auto-update on startup
-    run_update()
+    # Auto-update in background so it doesn't block startup
+    threading.Thread(target=run_update, daemon=True).start()
 
     cfg = Config()
     queue = JobQueue()
