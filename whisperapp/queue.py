@@ -118,6 +118,13 @@ class JobQueue:
                 ).fetchall()
         return [dict(r) for r in rows]
 
+    def clear_completed(self):
+        with self._conn() as conn:
+            conn.execute(
+                "DELETE FROM jobs WHERE status IN (?, ?, ?)",
+                (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELLED)
+            )
+
     def next_queued(self) -> dict:
         with self._conn() as conn:
             row = conn.execute(

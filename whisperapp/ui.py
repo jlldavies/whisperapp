@@ -19,10 +19,13 @@ def get_queue_status(queue):
         return "No jobs yet."
     rows = []
     for j in jobs:
-        bar = "\u2588" * (j["progress"] // 10) + "\u2591" * (10 - j["progress"] // 10)
+        pct = j["progress"]
+        filled = pct // 5  # 20-char bar for finer granularity
+        bar = "\u2588" * filled + "\u2591" * (20 - filled)
+        stage = j.get("stage", "") or j["status"]
         rows.append(
-            f"{j['file_name'][:40]:40s}  [{bar}] {j['progress']:3d}%  "
-            f"{j.get('stage', ''):20s}  {j['status']}"
+            f"{j['file_name'][:40]:40s}\n"
+            f"  [{bar}] {pct:3d}%  {stage}"
         )
     return "\n".join(rows)
 
@@ -136,9 +139,111 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
                     submit_btn = gr.Button("Transcribe", variant="primary")
 
                 with gr.Column():
-                    status_out = gr.Textbox(label="Queue", lines=15,
+                    status_out = gr.Textbox(label="Queue", lines=10,
                                              interactive=False)
-                    refresh_btn = gr.Button("Refresh")
+                    with gr.Row():
+                        refresh_btn = gr.Button("Refresh")
+                        clear_queue_btn = gr.Button("Clear Queue", variant="stop")
+
+                    # Inline speaker review panel (appears when a job needs review)
+                    review_panel = gr.Group(visible=False)
+                    with review_panel:
+                        gr.Markdown("### Speaker Review")
+                        inline_review_status = gr.Textbox(
+                            label="", interactive=False, lines=1)
+                        inline_review_job_id = gr.Textbox(
+                            visible=False, interactive=False)
+                        inline_snippets = gr.JSON(
+                            label="Speaker Snippets", visible=True)
+                        inline_names = gr.Textbox(
+                            label="Speaker Names (one per line: SPEAKER_00=Name)",
+                            lines=4,
+                            placeholder="SPEAKER_00=Alice\nSPEAKER_01=Bob")
+                        with gr.Row():
+                            inline_skip_btn = gr.Button(
+                                "Skip (use default labels)")
+                            inline_confirm_btn = gr.Button(
+                                "Confirm Names", variant="primary")
+
+            def _poll_queue_and_review(q):
+                """Return queue status + show/hide review panel."""
+                queue_text = get_queue_status(q)
+                # Check for jobs awaiting speaker review
+                review_jobs = q.list_jobs(
+                    status_filter="speaker_review", limit=1)
+                if review_jobs:
+                    job = review_jobs[0]
+                    from whisperapp.checkpoints import CheckpointManager as CM
+                    from whisperapp.speakers import extract_speaker_snippets as ess
+                    cm = CM(job["output_path"], job["id"])
+                    try:
+                        result = cm.load("speaker_review")
+                        snippets = ess(result)
+                    except Exception:
+                        snippets = {}
+                    prefill = "\n".join(
+                        f"{spk}=" for spk in sorted(snippets))
+                    return (queue_text,
+                            gr.Group(visible=True),
+                            f"Review needed: {job['file_name']}",
+                            job["id"], snippets, prefill)
+                return (queue_text,
+                        gr.Group(visible=False),
+                        "", "", {}, "")
+
+            def _inline_confirm(w, q, job_id, name_text):
+                if not job_id:
+                    return get_queue_status(q), gr.Group(visible=False), "No job selected.", "", {}, ""
+                names = {}
+                for line in name_text.strip().splitlines():
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        k, v = k.strip(), v.strip()
+                        if k and v:
+                            names[k] = v
+                from whisperapp.checkpoints import CheckpointManager as CM
+                from whisperapp.speakers import apply_speaker_names as asn
+                job = q.get_job(job_id)
+                cm = CM(job["output_path"], job_id)
+                result = cm.load("speaker_review")
+                renamed = asn(result, names)
+                w.complete_with_result(job_id, renamed)
+                return (get_queue_status(q), gr.Group(visible=False),
+                        f"Done — saved with renamed speakers.", "", {}, "")
+
+            def _inline_skip(w, q, job_id):
+                if not job_id:
+                    return get_queue_status(q), gr.Group(visible=False), "No job selected.", "", {}, ""
+                from whisperapp.checkpoints import CheckpointManager as CM
+                job = q.get_job(job_id)
+                cm = CM(job["output_path"], job_id)
+                result = cm.load("speaker_review")
+                w.complete_with_result(job_id, result)
+                return (get_queue_status(q), gr.Group(visible=False),
+                        f"Done — saved with default labels.", "", {}, "")
+
+            _review_outputs = [status_out, review_panel,
+                               inline_review_status, inline_review_job_id,
+                               inline_snippets, inline_names]
+
+            # Auto-poll queue status every 5 seconds
+            queue_timer = gr.Timer(value=5.0, active=True)
+            queue_timer.tick(
+                fn=lambda: _poll_queue_and_review(queue),
+                outputs=_review_outputs
+            )
+
+            inline_confirm_btn.click(
+                fn=lambda jid, names: _inline_confirm(
+                    worker, queue, jid, names),
+                inputs=[inline_review_job_id, inline_names],
+                outputs=_review_outputs
+            )
+            inline_skip_btn.click(
+                fn=lambda jid: _inline_skip(worker, queue, jid),
+                inputs=[inline_review_job_id],
+                outputs=_review_outputs
+            )
 
             submit_btn.click(
                 fn=lambda f, o, m, d, fmt: handle_submit(
@@ -149,8 +254,22 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
             )
 
             refresh_btn.click(
-                fn=lambda: get_queue_status(queue),
-                outputs=status_out
+                fn=lambda: _poll_queue_and_review(queue),
+                outputs=_review_outputs
+            )
+
+            def clear_all_jobs(q):
+                """Cancel running jobs and remove all from queue."""
+                jobs = q.list_jobs(limit=100)
+                for j in jobs:
+                    if j["status"] in ("queued", "running"):
+                        q.cancel_job(j["id"])
+                q.clear_completed()
+                return _poll_queue_and_review(q)
+
+            clear_queue_btn.click(
+                fn=lambda: clear_all_jobs(queue),
+                outputs=_review_outputs
             )
 
         with gr.Tab("Speaker Review"):
@@ -344,22 +463,58 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
                 write_formats(fmt_result, "live_recording", str(out_dir), fmt_list)
                 return f"Saved to {out_dir}", "", gr.Timer(active=False)
 
-            def do_polish():
+            def do_polish(current_transcript):
                 global _capture_engine
                 if _capture_engine is None:
-                    return "No active session."
+                    yield current_transcript, "No active session."
+                    return
                 from whisperapp.config import Config
                 cfg = Config()
                 if not cfg.hf_token:
-                    return "HuggingFace token required (set in Settings tab)."
-                polished = _capture_engine.polish(cfg.hf_token)
+                    yield current_transcript, "HuggingFace token required (set in Settings tab)."
+                    return
+
+                import threading
+                progress_state = {"stage": "", "detail": ""}
+                def on_progress(stage, detail):
+                    progress_state["stage"] = stage
+                    progress_state["detail"] = detail
+
+                result_holder = {"result": None, "error": None}
+                def run_polish():
+                    try:
+                        result_holder["result"] = _capture_engine.polish(cfg.hf_token, on_progress=on_progress)
+                    except Exception as e:
+                        result_holder["error"] = str(e)
+
+                t = threading.Thread(target=run_polish, daemon=True)
+                t.start()
+
+                import time
+                stages = {"preparing": "1/4", "transcribing": "2/4", "aligning": "3/4", "diarizing": "4/4", "complete": ""}
+                while t.is_alive():
+                    stage = progress_state["stage"]
+                    detail = progress_state["detail"]
+                    step = stages.get(stage, "")
+                    status = f"Polish [{step}] {stage}: {detail}" if stage else "Polish: starting..."
+                    yield current_transcript, status
+                    time.sleep(0.5)
+
+                if result_holder["error"]:
+                    yield current_transcript, f"Polish failed: {result_holder['error']}"
+                    return
+
+                polished = result_holder["result"]
                 lines = []
                 for seg in polished.get("segments", []):
                     speaker = seg.get("speaker", "")
                     text = seg.get("text", "").strip()
                     prefix = f"[{speaker}] " if speaker else ""
                     lines.append(f"{prefix}{text}")
-                return "\n".join(lines) if lines else "Polish produced no output."
+                if lines:
+                    yield "\n".join(lines), "Polish complete."
+                else:
+                    yield current_transcript, "Polish produced no output."
 
             start_btn.click(
                 fn=start_capture,
@@ -385,7 +540,8 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
 
             polish_btn.click(
                 fn=do_polish,
-                outputs=[live_transcript],
+                inputs=[live_transcript],
+                outputs=[live_transcript, live_status],
             )
 
         with gr.Tab("Settings"):
