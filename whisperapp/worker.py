@@ -304,7 +304,7 @@ class Worker:
                 hb.update("transcribing")
                 model.transcribe = _patched_transcribe(
                     model.transcribe, self.queue, job_id, hb)
-                result = model.transcribe(audio, batch_size=8)
+                result = model.transcribe(audio, batch_size=8, language="en")
 
                 cm.save("transcription", result)
                 del model

@@ -157,10 +157,11 @@ class TranscriptAccumulator:
         abs_start = self._offset + start
         abs_end = self._offset + end
 
-        # Deduplicate: skip if last segment has >50% text overlap
+        # Deduplicate only exact repeats (case-insensitive). The VAD buffer
+        # yields non-overlapping utterances, so anything else is real content.
         if self._segments:
             last = self._segments[-1]
-            if _overlap_ratio(last["text"], text) > 0.5:
+            if last["text"].strip().lower() == text.lower():
                 return
 
         self._segments.append({
@@ -207,15 +208,22 @@ class StreamingEngine:
     def __init__(
         self,
         model_size: str = "base",
-        device: str = "cpu",
-        compute_type: str = "float32",
+        device: str = "auto",
+        compute_type: str = "auto",
         min_chunk_sec: float = 1.0,
         max_chunk_sec: float = 10.0,
         silence_threshold_sec: float = 0.6,
     ):
         self.model_size = model_size
-        self.device = device
-        self.compute_type = compute_type
+        if device == "auto":
+            import torch
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = device
+        if compute_type == "auto":
+            self.compute_type = "float16" if self.device == "cuda" else "float32"
+        else:
+            self.compute_type = compute_type
 
         self._model = None
         self._buffer = AudioBuffer(
@@ -264,7 +272,7 @@ class StreamingEngine:
         segments, _info = self._model.transcribe(
             audio_16k,
             beam_size=1,
-            language=None,  # auto-detect
+            language="en",  # lock to English to prevent hallucination
             vad_filter=False,  # we handle VAD ourselves
         )
 
@@ -316,46 +324,58 @@ class StreamingEngine:
         self._all_audio.clear()
         self._running = False
 
-    def polish(self, hf_token: str) -> dict:
+    def polish(self, hf_token: str, on_progress=None) -> dict:
         """Run WhisperX alignment + diarization on accumulated audio.
 
         This is a post-hoc step that produces word-level timestamps and
         speaker labels — not possible in real-time.
+
+        on_progress(stage, detail) is called at each stage if provided.
         """
+        def _progress(stage, detail=""):
+            if on_progress:
+                on_progress(stage, detail)
+
         if not self._all_audio:
             return {"segments": [], "text": ""}
 
         raw_audio = np.concatenate(self._all_audio)
+        duration_sec = len(raw_audio) / 16000
+        _progress("preparing", f"{duration_sec:.0f}s of audio on {self.device}")
 
         import whisperx
 
-        # Transcribe with WhisperX for alignment-compatible output
+        # Stage 1: Transcribe
+        _progress("transcribing", "loading WhisperX model...")
         model = whisperx.load_model(
             self.model_size, device=self.device, compute_type=self.compute_type
         )
-        result = model.transcribe(raw_audio, batch_size=8)
+        _progress("transcribing", "running transcription...")
+        result = model.transcribe(raw_audio, batch_size=8, language="en")
         del model
+        _progress("transcribing", "done")
 
-        # Align
+        # Stage 2: Align
         language = result.get("language", "en")
+        _progress("aligning", f"loading alignment model (lang={language})...")
         align_model, metadata = whisperx.load_align_model(
             language_code=language, device=self.device
         )
-
-        # WhisperX align expects a file path or audio array
+        _progress("aligning", "running alignment...")
         aligned = whisperx.align(
             result["segments"], align_model, metadata, raw_audio, device=self.device
         )
         del align_model
+        _progress("aligning", "done")
 
-        # Diarize (optional, requires HF token)
+        # Stage 3: Diarize (optional, requires HF token)
         if hf_token:
             try:
                 from whisperx.diarize import DiarizationPipeline
                 import tempfile
                 import soundfile as sf
 
-                # Diarization pipeline needs a file path
+                _progress("diarizing", "loading diarization pipeline...")
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                     sf.write(f.name, raw_audio, 16000)
                     tmp_path = f.name
@@ -363,6 +383,7 @@ class StreamingEngine:
                 diarize_pipeline = DiarizationPipeline(
                     token=hf_token, device=self.device
                 )
+                _progress("diarizing", "assigning speakers...")
                 diarize_segments = diarize_pipeline(tmp_path)
                 result_diarized = whisperx.assign_word_speakers(
                     diarize_segments, aligned
@@ -371,9 +392,12 @@ class StreamingEngine:
                 import os
                 os.unlink(tmp_path)
 
+                _progress("complete", "")
                 return result_diarized
             except Exception as e:
                 logger.warning("Diarization failed, returning aligned result: %s", e)
+                _progress("complete", f"diarization failed: {e} (returning aligned)")
                 return aligned
         else:
+            _progress("complete", "")
             return aligned

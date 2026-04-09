@@ -460,8 +460,10 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
 
                 fmt_result = {"segments": result["segments"]}
                 fmt_list = formats if formats else ["txt"]
-                write_formats(fmt_result, "live_recording", str(out_dir), fmt_list)
-                return f"Saved to {out_dir}", "", gr.Timer(active=False)
+                from datetime import datetime
+                stem = f"live_recording_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}"
+                write_formats(fmt_result, stem, str(out_dir), fmt_list)
+                return f"Saved {stem} to {out_dir}", "", gr.Timer(active=False)
 
             def do_polish(current_transcript):
                 global _capture_engine

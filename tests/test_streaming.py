@@ -227,10 +227,178 @@ class TestStreamingEngine:
             "segments": [{"start": 0, "end": 1, "text": "Hi"}],
         }
 
-        engine = StreamingEngine()
+        engine = StreamingEngine(device="cpu", compute_type="float32")
         engine._all_audio = [np.zeros(16000, dtype=np.float32)]
 
         result = engine.polish(hf_token="")  # no diarization without token
         assert "segments" in result
         mock_load.assert_called_once()
         mock_align.assert_called_once()
+
+    @patch("whisperx.assign_word_speakers")
+    @patch("whisperx.align")
+    @patch("whisperx.load_align_model")
+    @patch("whisperx.load_model")
+    def test_polish_calls_progress_callback(self, mock_load, mock_align_load,
+                                             mock_align, mock_assign):
+        from whisperapp.streaming import StreamingEngine
+
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = {
+            "segments": [{"start": 0, "end": 1, "text": "Hi"}],
+            "language": "en",
+        }
+        mock_load.return_value = mock_model
+        mock_align_load.return_value = (MagicMock(), {})
+        mock_align.return_value = {"segments": [{"start": 0, "end": 1, "text": "Hi"}]}
+
+        engine = StreamingEngine(device="cpu", compute_type="float32")
+        engine._all_audio = [np.zeros(16000, dtype=np.float32)]
+
+        progress_log = []
+        def on_progress(stage, detail):
+            progress_log.append((stage, detail))
+
+        engine.polish(hf_token="", on_progress=on_progress)
+
+        stages = [p[0] for p in progress_log]
+        assert "preparing" in stages
+        assert "transcribing" in stages
+        assert "aligning" in stages
+        assert "complete" in stages
+
+    @patch("whisperx.assign_word_speakers")
+    @patch("whisperx.align")
+    @patch("whisperx.load_align_model")
+    @patch("whisperx.load_model")
+    def test_polish_with_diarization(self, mock_load, mock_align_load,
+                                      mock_align, mock_assign):
+        from whisperapp.streaming import StreamingEngine
+
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = {
+            "segments": [{"start": 0, "end": 1, "text": "Hi"}],
+            "language": "en",
+        }
+        mock_load.return_value = mock_model
+        mock_align_load.return_value = (MagicMock(), {})
+        mock_align.return_value = {"segments": [{"start": 0, "end": 1, "text": "Hi"}]}
+        mock_assign.return_value = {
+            "segments": [{"start": 0, "end": 1, "text": "Hi", "speaker": "SPEAKER_00"}],
+        }
+
+        engine = StreamingEngine(device="cpu", compute_type="float32")
+        engine._all_audio = [np.zeros(16000, dtype=np.float32)]
+
+        with patch("whisperx.diarize.DiarizationPipeline") as mock_dp, \
+             patch("soundfile.write"):
+            mock_dp.return_value = MagicMock(return_value=MagicMock())
+            result = engine.polish(hf_token="hf_test_token")
+
+        assert "segments" in result
+        mock_assign.assert_called_once()
+
+        progress_log = []
+        def on_progress(stage, detail):
+            progress_log.append((stage, detail))
+
+        engine._all_audio = [np.zeros(16000, dtype=np.float32)]
+        with patch("whisperx.diarize.DiarizationPipeline") as mock_dp, \
+             patch("soundfile.write"):
+            mock_dp.return_value = MagicMock(return_value=MagicMock())
+            engine.polish(hf_token="hf_test_token", on_progress=on_progress)
+
+        stages = [p[0] for p in progress_log]
+        assert "diarizing" in stages
+        assert "complete" in stages
+
+    @patch("whisperx.assign_word_speakers")
+    @patch("whisperx.align")
+    @patch("whisperx.load_align_model")
+    @patch("whisperx.load_model")
+    def test_polish_diarization_failure_returns_aligned(self, mock_load,
+            mock_align_load, mock_align, mock_assign):
+        from whisperapp.streaming import StreamingEngine
+
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = {
+            "segments": [{"start": 0, "end": 1, "text": "Hi"}],
+            "language": "en",
+        }
+        mock_load.return_value = mock_model
+        mock_align_load.return_value = (MagicMock(), {})
+        aligned_result = {"segments": [{"start": 0, "end": 1, "text": "Hi"}]}
+        mock_align.return_value = aligned_result
+
+        engine = StreamingEngine(device="cpu", compute_type="float32")
+        engine._all_audio = [np.zeros(16000, dtype=np.float32)]
+
+        with patch("whisperx.diarize.DiarizationPipeline", side_effect=RuntimeError("model failed")):
+            result = engine.polish(hf_token="hf_test_token")
+
+        # Should return aligned result, not crash
+        assert "segments" in result
+        assert result["segments"][0]["text"] == "Hi"
+
+    def test_polish_empty_audio_returns_empty(self):
+        from whisperapp.streaming import StreamingEngine
+        engine = StreamingEngine(device="cpu", compute_type="float32")
+        engine._all_audio = []
+        result = engine.polish(hf_token="hf_test")
+        assert result == {"segments": [], "text": ""}
+
+    @patch("whisperx.assign_word_speakers")
+    @patch("whisperx.align")
+    @patch("whisperx.load_align_model")
+    @patch("whisperx.load_model")
+    def test_polish_no_progress_callback_ok(self, mock_load, mock_align_load,
+                                             mock_align, mock_assign):
+        """Polish works fine when on_progress is not provided (default None)."""
+        from whisperapp.streaming import StreamingEngine
+
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = {
+            "segments": [{"start": 0, "end": 1, "text": "Hi"}],
+            "language": "en",
+        }
+        mock_load.return_value = mock_model
+        mock_align_load.return_value = (MagicMock(), {})
+        mock_align.return_value = {"segments": [{"start": 0, "end": 1, "text": "Hi"}]}
+
+        engine = StreamingEngine(device="cpu", compute_type="float32")
+        engine._all_audio = [np.zeros(16000, dtype=np.float32)]
+        result = engine.polish(hf_token="")
+        assert "segments" in result
+
+
+# ---------------------------------------------------------------------------
+# Device auto-detection tests
+# ---------------------------------------------------------------------------
+
+class TestDeviceAutoDetection:
+    @patch("torch.cuda.is_available", return_value=True)
+    def test_streaming_engine_auto_selects_cuda(self, mock_cuda):
+        from whisperapp.streaming import StreamingEngine
+        engine = StreamingEngine(device="auto", compute_type="auto")
+        assert engine.device == "cuda"
+        assert engine.compute_type == "float16"
+
+    @patch("torch.cuda.is_available", return_value=False)
+    def test_streaming_engine_auto_selects_cpu(self, mock_cuda):
+        from whisperapp.streaming import StreamingEngine
+        engine = StreamingEngine(device="auto", compute_type="auto")
+        assert engine.device == "cpu"
+        assert engine.compute_type == "float32"
+
+    def test_streaming_engine_explicit_device_respected(self):
+        from whisperapp.streaming import StreamingEngine
+        engine = StreamingEngine(device="cpu", compute_type="float32")
+        assert engine.device == "cpu"
+        assert engine.compute_type == "float32"
+
+    @patch("torch.cuda.is_available", return_value=True)
+    def test_streaming_engine_auto_device_explicit_compute(self, mock_cuda):
+        from whisperapp.streaming import StreamingEngine
+        engine = StreamingEngine(device="auto", compute_type="int8")
+        assert engine.device == "cuda"
+        assert engine.compute_type == "int8"
