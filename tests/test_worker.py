@@ -16,6 +16,16 @@ def setup(tmp_path):
     (tmp_path / "audio.mp3").write_bytes(b"fake audio")
     return q, job_id, tmp_path
 
+# _patched_transcribe wraps a bound method via original_transcribe.__self__,
+# which MagicMock attributes don't expose. Tests that mock whisperx replace
+# it with a passthrough so the mocked model.transcribe is called directly.
+_PASSTHROUGH_PATCH = patch(
+    "whisperapp.worker._patched_transcribe",
+    new=lambda original_transcribe, queue, job_id, heartbeat: original_transcribe,
+)
+
+
+@_PASSTHROUGH_PATCH
 @patch("whisperapp.worker.whisperx")
 def test_worker_marks_job_running(mock_wx, setup):
     from whisperapp.worker import Worker
@@ -35,6 +45,7 @@ def test_worker_marks_job_running(mock_wx, setup):
     job = q.get_job(job_id)
     assert job["status"] in (JobStatus.DONE, JobStatus.SPEAKER_REVIEW)
 
+@_PASSTHROUGH_PATCH
 @patch("whisperapp.worker.whisperx")
 def test_worker_saves_checkpoints(mock_wx, setup):
     from whisperapp.worker import Worker
@@ -78,6 +89,7 @@ def test_worker_device_is_valid():
     else:
         assert _COMPUTE_TYPE == "float32"
 
+@_PASSTHROUGH_PATCH
 @patch("whisperapp.worker.whisperx")
 def test_worker_uses_module_device(mock_wx, setup):
     """Verify that process_job passes _DEVICE to whisperx calls."""
