@@ -1,3 +1,4 @@
+import subprocess
 import sys
 import threading
 import webbrowser
@@ -37,9 +38,10 @@ ICONS = {
 # ---------------------------------------------------------------------------
 
 class TrayApp:
-    def __init__(self, queue, worker):
+    def __init__(self, queue, worker, watcher=None):
         self.queue = queue
         self.worker = worker
+        self._watcher = watcher
         self._icon = None
         self._startup_enabled = self._check_startup_registered()
 
@@ -96,17 +98,28 @@ class TrayApp:
             if active else "Idle"
         )
 
-        return pystray.Menu(
+        items = [
             pystray.MenuItem("WhisperApp", None, enabled=False),
             pystray.MenuItem(status_label, None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Open UI", self._open_ui, default=True),
             pystray.MenuItem("Open API docs", self._open_api),
             pystray.Menu.SEPARATOR,
+        ]
+
+        # Show dismiss only while a meeting/mic trigger is active and not yet dismissed
+        if (self._watcher is not None
+                and self._watcher.is_active
+                and not self._watcher._dismissed):
+            items.append(pystray.MenuItem("Dismiss meeting prompt", self._dismiss_watcher))
+            items.append(pystray.Menu.SEPARATOR)
+
+        items += [
             pystray.MenuItem(startup_label, self._toggle_startup),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self._quit),
-        )
+        ]
+        return pystray.Menu(*items)
 
     # ------------------------------------------------------------------
     # Actions
@@ -120,6 +133,39 @@ class TrayApp:
 
     def _quit(self, icon, item):
         icon.stop()
+
+    def _notify(self, message: str, title: str = "WhisperApp") -> None:
+        """Send a native OS notification. Best-effort — never raises."""
+        try:
+            if sys.platform == "darwin":
+                safe_msg = message.replace('"', '\\"').replace("'", "\\'")
+                safe_title = title.replace('"', '\\"').replace("'", "\\'")
+                subprocess.run(
+                    ["osascript", "-e",
+                     f'display notification "{safe_msg}" with title "{safe_title}"'],
+                    check=False, timeout=5,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            else:
+                if self._icon:
+                    self._icon.notify(message, title)
+        except Exception:
+            pass
+
+    def _on_meeting_detected(self, source: str, name: str) -> None:
+        """Called by MeetingWatcher when a trigger fires."""
+        if source == "app":
+            msg = f"{name} started — transcribe this meeting?"
+        else:
+            msg = "Microphone activated — start transcribing?"
+        self._notify(msg)
+
+    def _dismiss_watcher(self, icon=None, item=None):
+        if self._watcher is not None:
+            self._watcher.dismiss()
+        if self._icon:
+            self._icon.menu = self._build_menu()
+            self._icon.update_menu()
 
     # ------------------------------------------------------------------
     # Status polling
@@ -159,6 +205,10 @@ class TrayApp:
         )
 
         threading.Thread(target=self._poll_status, daemon=True).start()
+
+        if self._watcher is not None:
+            self._watcher.on_trigger = self._on_meeting_detected
+            self._watcher.start()
 
         # On macOS, pystray uses the menu bar automatically via rumps/AppKit.
         # On Windows, it appears in the system tray notification area.

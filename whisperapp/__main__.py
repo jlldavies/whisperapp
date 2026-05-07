@@ -12,6 +12,7 @@ from whisperapp.server import create_app
 from whisperapp.ui import create_ui
 from whisperapp.tray import TrayApp
 from whisperapp.updater import run_update
+from whisperapp.watcher import MeetingWatcher
 
 
 def _pid_running(pid: int) -> bool:
@@ -78,7 +79,12 @@ def main():
     if not cfg.hf_token:
         print("First run - open http://127.0.0.1:7860 to complete setup.")
 
-    TrayApp(queue=queue, worker=worker).run()
+    try:
+        watcher = MeetingWatcher(on_trigger=lambda s, n: None)
+    except Exception:
+        watcher = None
+
+    TrayApp(queue=queue, worker=worker, watcher=watcher).run()
 
 
 if __name__ == "__main__":

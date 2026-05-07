@@ -8,14 +8,9 @@ def _make_tray():
     mock_queue = MagicMock()
     mock_queue.list_jobs.return_value = []
     with patch("whisperapp.tray.pystray"), \
-         patch("whisperapp.tray.Image"):
-        if sys.platform == "win32":
-            with patch("whisperapp.tray.winreg",
-                       create=True) as mock_reg:
-                mock_reg.OpenKey.side_effect = FileNotFoundError
-                return TrayApp(queue=mock_queue, worker=MagicMock())
-        else:
-            return TrayApp(queue=mock_queue, worker=MagicMock())
+         patch("whisperapp.tray.Image"), \
+         patch.object(TrayApp, "_check_startup_registered", return_value=False):
+        return TrayApp(queue=mock_queue, worker=MagicMock())
 
 
 def test_tray_app_creates():
@@ -77,3 +72,47 @@ def test_toggle_startup_unregisters(tmp_path):
         app._toggle_startup(mock_icon, None)
         mock_unreg.assert_called_once()
     assert app._startup_enabled is False
+
+
+def test_tray_creates_with_watcher():
+    """TrayApp should accept an optional watcher argument."""
+    from whisperapp.watcher import MeetingWatcher
+    mock_watcher = MagicMock(spec=MeetingWatcher)
+    mock_queue = MagicMock()
+    mock_queue.list_jobs.return_value = []
+    with patch("whisperapp.tray.pystray"), \
+         patch("whisperapp.tray.Image"), \
+         patch.object(TrayApp, "_check_startup_registered", return_value=False):
+        app = TrayApp(queue=mock_queue, worker=MagicMock(), watcher=mock_watcher)
+    assert app._watcher is mock_watcher
+
+
+def test_on_meeting_detected_sends_notification_mac(monkeypatch):
+    """macOS: _on_meeting_detected should call _notify which calls subprocess.run."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    app = _make_tray()
+    with patch("whisperapp.tray.subprocess.run") as mock_run:
+        app._on_meeting_detected("app", "Zoom")
+    mock_run.assert_called_once()
+    cmd = mock_run.call_args[0][0]
+    assert "osascript" in cmd
+    assert "Zoom" in " ".join(cmd)
+
+
+def test_on_meeting_detected_sends_notification_win(monkeypatch):
+    """Windows: _on_meeting_detected should call icon.notify."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    app = _make_tray()
+    app._icon = MagicMock()
+    app._on_meeting_detected("app", "Zoom")
+    app._icon.notify.assert_called_once()
+
+
+def test_on_meeting_detected_mic_trigger():
+    """Mic trigger uses generic 'Microphone activated' message."""
+    app = _make_tray()
+    with patch.object(app, "_notify") as mock_notify:
+        app._on_meeting_detected("mic", "")
+    mock_notify.assert_called_once()
+    msg = mock_notify.call_args[0][0]
+    assert "microphone" in msg.lower() or "Microphone" in msg
