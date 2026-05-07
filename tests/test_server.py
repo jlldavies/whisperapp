@@ -348,6 +348,7 @@ async def test_post_config(app, tmp_path):
             r = await c.post("/config", json={"default_model": "small"})
     assert r.status_code == 200
     assert r.json()["success"] is True
+    instance.save.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_get_audio_devices(app):
@@ -362,7 +363,8 @@ async def test_get_audio_devices(app):
 @pytest.mark.asyncio
 async def test_upload_file(app, tmp_path):
     fake_audio = b"RIFF" + b"\x00" * 100
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        r = await c.post("/upload", files={"file": ("test.wav", fake_audio, "audio/wav")})
+    with patch("whisperapp.server._config_dir", return_value=tmp_path):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post("/upload", files={"file": ("test.wav", fake_audio, "audio/wav")})
     assert r.status_code == 200
     assert "path" in r.json()
