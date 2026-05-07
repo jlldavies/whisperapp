@@ -107,8 +107,54 @@ class MeetingWatcher:
 
 
 def _running_trigger_apps() -> set[str]:
-    return set()
+    """Return display names of TRIGGER_APPS currently running."""
+    if sys.platform == "darwin":
+        return _running_trigger_apps_mac()
+    return _running_trigger_apps_psutil()
+
+
+def _running_trigger_apps_mac() -> set[str]:
+    try:
+        from AppKit import NSWorkspace
+        running = NSWorkspace.sharedWorkspace().runningApplications()
+        result: set[str] = set()
+        for app in running:
+            name = (app.localizedName() or "").lower()
+            bundle = (app.bundleIdentifier() or "").lower()
+            for fragment, display in TRIGGER_APPS.items():
+                if fragment in name or fragment in bundle:
+                    result.add(display)
+        return result
+    except Exception:
+        return _running_trigger_apps_psutil()
+
+
+def _running_trigger_apps_psutil() -> set[str]:
+    import psutil
+    result: set[str] = set()
+    try:
+        for proc in psutil.process_iter(["name"]):
+            name = (proc.info["name"] or "").lower().replace(".exe", "")
+            for fragment, display in TRIGGER_APPS.items():
+                if fragment in name:
+                    result.add(display)
+    except Exception:
+        pass
+    return result
 
 
 def _mic_in_use() -> bool:
+    """Return True if any external process is currently using the microphone."""
+    if sys.platform == "darwin":
+        return _mic_in_use_mac()
+    elif sys.platform == "win32":
+        return _mic_in_use_win()
     return False
+
+
+def _mic_in_use_mac() -> bool:
+    return False  # stub — implemented in Task 3
+
+
+def _mic_in_use_win() -> bool:
+    return False  # stub — implemented in Task 4
