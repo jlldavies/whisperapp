@@ -11,7 +11,26 @@
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
-  <div id="app"></div>
+  <div id="window-root">
+    <div id="titlebar">
+      <div id="traffic-lights">
+        <span class="tl-dot close"   title="Close"></span>
+        <span class="tl-dot minimize" title="Minimize"></span>
+        <span class="tl-dot maximize" title="Maximize"></span>
+      </div>
+      <div id="window-title-text" class="mono">Whisper</div>
+      <button id="theme-toggle" title="Toggle theme">◑</button>
+    </div>
+    <div id="app-shell">
+      <aside id="sidebar"></aside>
+      <div id="main-content">
+        <div id="screen-transcribe" class="screen"></div>
+        <div id="screen-live"       class="screen"></div>
+        <div id="screen-speakers"   class="screen"></div>
+        <div id="screen-settings"   class="screen"></div>
+      </div>
+    </div>
+  </div>
   <script type="module" src="/js/app.js"></script>
 </body>
 </html>
