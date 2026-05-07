@@ -96,7 +96,7 @@ export function renderWaveform(container, { height = 56, bars = 80, playhead = n
     const past = playhead != null && i / bars < playhead;
     return `<div class="wa-waveform-bar" style="
       height:${h * 100}%;
-      background:${past ? 'var(--accent)' : 'var(--ink-2)'};
+      background:${past ? 'var(--accent)' : 'var(--ink-3)'};
       opacity:${past ? 1 : 0.55}
     "></div>`;
   }).join('');

@@ -10,20 +10,25 @@ from whisperapp.startup import register_startup, unregister_startup
 # Icon factory
 # ---------------------------------------------------------------------------
 
-def _make_icon(bg: str, dot: str = "white") -> Image.Image:
-    """64×64 circle icon: coloured ring on bg, white dot in centre."""
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+def _make_icon(bg: str, fg: str = "#faf8f4") -> Image.Image:
+    """64×64 brand mark: rounded square with 'w' waveform path."""
+    size = 64
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.ellipse([2, 2, 62, 62], fill=bg)
-    d.ellipse([20, 20, 44, 44], fill=dot)
+    # Rounded square — matches SVG: 32×32 viewBox, rx=9, 1px inset → scale ×2
+    d.rounded_rectangle([2, 2, 62, 62], radius=18, fill=bg)
+    # 'w' waveform path: SVG coords ×2 (32→64 scale)
+    # M8,12 L11,22 L14,14 L16,14 L18,22 L21,14 L24,22
+    pts = [(16, 24), (22, 44), (28, 28), (32, 28), (36, 44), (42, 28), (48, 44)]
+    d.line(pts, fill=fg, width=4, joint="curve")
     return img
 
 
 ICONS = {
     "idle":    _make_icon("#888888"),
-    "ready":   _make_icon("#22aa44"),
-    "working": _make_icon("#2255cc"),
-    "error":   _make_icon("#cc2222"),
+    "ready":   _make_icon("#5b9168"),   # --signal-go
+    "working": _make_icon("#c96442"),   # --accent terracotta
+    "error":   _make_icon("#c4523f"),   # --signal-rec
 }
 
 
