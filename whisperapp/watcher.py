@@ -153,7 +153,13 @@ def _mic_in_use() -> bool:
 
 
 def _mic_in_use_mac() -> bool:
-    return False  # stub — implemented in Task 3
+    """True if any audio input device is currently in use by another application."""
+    try:
+        from AVFoundation import AVCaptureDevice, AVMediaTypeAudio
+        devices = AVCaptureDevice.devicesWithMediaType_(AVMediaTypeAudio)
+        return any(d.isInUseByAnotherApplication() for d in devices)
+    except Exception:
+        return False
 
 
 def _mic_in_use_win() -> bool:

@@ -1,5 +1,7 @@
+import sys
 import threading
 import time
+import pytest
 from unittest.mock import patch, MagicMock
 from whisperapp.watcher import MeetingWatcher, TRIGGER_APPS
 
@@ -82,3 +84,45 @@ def test_watcher_dismissed_resets_after_app_closes():
     with patch("whisperapp.watcher._running_trigger_apps", return_value={"Zoom"}):
         w._check_apps()
     assert len(fired) == 2
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
+def test_mic_in_use_mac_returns_false_when_device_not_active():
+    from whisperapp.watcher import _mic_in_use_mac
+    mock_device = MagicMock()
+    mock_device.isInUseByAnotherApplication.return_value = False
+    with patch.dict("sys.modules", {
+        "AVFoundation": MagicMock(
+            AVCaptureDevice=MagicMock(
+                devicesWithMediaType_=MagicMock(return_value=[mock_device])
+            ),
+            AVMediaTypeAudio="soun"
+        )
+    }):
+        result = _mic_in_use_mac()
+    assert result is False
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
+def test_mic_in_use_mac_returns_true_when_device_active():
+    from whisperapp.watcher import _mic_in_use_mac
+    mock_device = MagicMock()
+    mock_device.isInUseByAnotherApplication.return_value = True
+    with patch.dict("sys.modules", {
+        "AVFoundation": MagicMock(
+            AVCaptureDevice=MagicMock(
+                devicesWithMediaType_=MagicMock(return_value=[mock_device])
+            ),
+            AVMediaTypeAudio="soun"
+        )
+    }):
+        result = _mic_in_use_mac()
+    assert result is True
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
+def test_mic_in_use_mac_returns_false_on_import_error():
+    from whisperapp.watcher import _mic_in_use_mac
+    with patch.dict("sys.modules", {"AVFoundation": None}):
+        result = _mic_in_use_mac()
+    assert result is False
