@@ -11,6 +11,12 @@ let _transcript = [];
 let _partial = '';
 let _waveAnimFrame = null;
 
+// Check-levels state
+let _checkStream = null;
+let _checkCtx = null;
+let _checkAnalyser = null;
+let _checkFrame = null;
+
 export function initLive(container) {
   container.innerHTML = `
     <div class="wa-topbar">
@@ -97,7 +103,7 @@ export function initLive(container) {
   `;
 
   // Initial waveform render
-  renderWaveform(container.querySelector('#waveform-container'), { height: 64, bars: 120 });
+  renderWaveform(container.querySelector('#waveform-container'), { height: 64, bars: 120, color: 'var(--ink-2)' });
 
   // Load devices using browser's MediaDevices API for correct deviceId strings
   if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
@@ -125,6 +131,12 @@ export function initLive(container) {
     const f = chip.dataset.fmt;
     if (liveFmts.has(f)) liveFmts.delete(f); else liveFmts.add(f);
     chip.classList.toggle('on', liveFmts.has(f));
+  });
+
+  // Check levels button
+  container.querySelector('#check-levels-btn').addEventListener('click', () => {
+    if (_checkStream) stopCheckLevels(container);
+    else startCheckLevels(container);
   });
 
   // Record button
@@ -251,6 +263,66 @@ function updateTranscriptUI(container) {
     : '';
   body.innerHTML = lines + partial || `<p style="color:var(--ink-4);font-style:italic">Transcript will appear here…</p>`;
   body.scrollTop = body.scrollHeight;
+}
+
+async function startCheckLevels(container) {
+  const deviceId = container.querySelector('#device-select').value;
+  try {
+    const constraints = deviceId ? { audio: { deviceId: { exact: deviceId } } } : { audio: true };
+    _checkStream = await navigator.mediaDevices.getUserMedia(constraints);
+    _checkCtx = new AudioContext();
+    _checkAnalyser = _checkCtx.createAnalyser();
+    _checkAnalyser.fftSize = 512;
+    _checkCtx.createMediaStreamSource(_checkStream).connect(_checkAnalyser);
+
+    const btn = container.querySelector('#check-levels-btn');
+    btn.textContent = 'Stop';
+    btn.classList.add('active');
+
+    const wc = container.querySelector('#waveform-container');
+    const timeData = new Float32Array(_checkAnalyser.frequencyBinCount);
+
+    function tick() {
+      _checkFrame = requestAnimationFrame(tick);
+      _checkAnalyser.getFloatTimeDomainData(timeData);
+
+      let sum = 0;
+      for (let i = 0; i < timeData.length; i++) sum += timeData[i] * timeData[i];
+      const rms = Math.sqrt(sum / timeData.length);
+      const db = rms > 1e-7 ? 20 * Math.log10(rms) : null;
+      const dbEl = container.querySelector('#db-value');
+      if (dbEl) dbEl.textContent = db != null ? db.toFixed(1) : '−∞';
+
+      // Drive waveform bars from live audio
+      const bars = wc.querySelectorAll('.wa-waveform-bar');
+      const step = Math.max(1, Math.floor(timeData.length / bars.length));
+      bars.forEach((bar, i) => {
+        const amp = Math.abs(timeData[i * step] || 0);
+        const h = Math.max(0.06, Math.min(1, 0.12 + amp * 4));
+        bar.style.height = (h * 100) + '%';
+        bar.style.background = 'var(--ink-2)';
+        bar.style.opacity = 0.45 + amp * 0.55;
+      });
+    }
+    tick();
+  } catch (err) {
+    alert('Microphone access denied: ' + err.message);
+    stopCheckLevels(container);
+  }
+}
+
+function stopCheckLevels(container) {
+  if (_checkFrame) { cancelAnimationFrame(_checkFrame); _checkFrame = null; }
+  if (_checkCtx)   { _checkCtx.close().catch(() => {}); _checkCtx = null; }
+  if (_checkStream) { _checkStream.getTracks().forEach(t => t.stop()); _checkStream = null; }
+  _checkAnalyser = null;
+
+  const btn = container.querySelector('#check-levels-btn');
+  if (btn) { btn.textContent = 'Check levels'; btn.classList.remove('active'); }
+
+  const dbEl = container.querySelector('#db-value');
+  if (dbEl) dbEl.textContent = '—';
+  renderWaveform(container.querySelector('#waveform-container'), { height: 64, bars: 120, color: 'var(--ink-2)' });
 }
 
 function float32ToBase64(f32) {

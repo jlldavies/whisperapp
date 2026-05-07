@@ -84,7 +84,7 @@ export function renderTopBar(container, { title, sub = '', right = '' }) {
   `;
 }
 
-export function renderWaveform(container, { height = 56, bars = 80, playhead = null }) {
+export function renderWaveform(container, { height = 56, bars = 80, playhead = null, color = 'var(--ink-3)' }) {
   const heights = Array.from({ length: bars }, (_, i) => {
     const x = i / bars;
     const v = Math.sin(x * 22) * 0.4 + Math.sin(x * 6 + 1.2) * 0.5 + Math.sin(x * 53) * 0.15;
@@ -96,7 +96,7 @@ export function renderWaveform(container, { height = 56, bars = 80, playhead = n
     const past = playhead != null && i / bars < playhead;
     return `<div class="wa-waveform-bar" style="
       height:${h * 100}%;
-      background:${past ? 'var(--accent)' : 'var(--ink-3)'};
+      background:${past ? 'var(--accent)' : color};
       opacity:${past ? 1 : 0.55}
     "></div>`;
   }).join('');
