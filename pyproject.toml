@@ -29,6 +29,8 @@ dependencies = [
     "requests",
     "pyaudio",
     "soundfile",
+    "psutil",
+    "pyobjc-framework-AVFoundation; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]
