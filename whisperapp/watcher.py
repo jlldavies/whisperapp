@@ -165,4 +165,55 @@ def _mic_in_use_mac() -> bool:
 
 
 def _mic_in_use_win() -> bool:
-    return False  # stub — implemented in Task 4
+    """Check Windows mic consent store for any app currently using the microphone."""
+    try:
+        import winreg
+        base = (r"SOFTWARE\Microsoft\Windows\CurrentVersion"
+                r"\CapabilityAccessManager\ConsentStore\microphone")
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, base) as root:
+            idx = 0
+            while True:
+                try:
+                    app_name = winreg.EnumKey(root, idx)
+                    with winreg.OpenKey(root, app_name) as app_key:
+                        if app_name == "NonPackaged":
+                            # Non-store apps (Chrome, Zoom.exe, …) live here
+                            j = 0
+                            while True:
+                                try:
+                                    exe = winreg.EnumKey(app_key, j)
+                                    with winreg.OpenKey(app_key, exe) as exe_key:
+                                        if _mic_key_active(exe_key):
+                                            return True
+                                    j += 1
+                                except OSError:
+                                    break
+                        else:
+                            if _mic_key_active(app_key):
+                                return True
+                    idx += 1
+                except OSError:
+                    break
+    except OSError:
+        pass
+    return False
+
+
+def _mic_key_active(key) -> bool:
+    """Return True if registry key shows app currently using the mic.
+
+    Active = LastUsedTimeStart > 0 AND (LastUsedTimeStop == 0 OR stop < start).
+    FILETIME values are 64-bit ints (100ns intervals since 1601-01-01).
+    """
+    try:
+        import winreg
+        start, _ = winreg.QueryValueEx(key, "LastUsedTimeStart")
+        if start == 0:
+            return False
+        try:
+            stop, _ = winreg.QueryValueEx(key, "LastUsedTimeStop")
+            return stop == 0 or stop < start
+        except OSError:
+            return True   # no stop time recorded → still active
+    except OSError:
+        return False

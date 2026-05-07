@@ -141,3 +141,38 @@ def test_mic_in_use_mac_returns_false_when_devices_is_none():
     }):
         result = _mic_in_use_mac()
     assert result is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_mic_in_use_win_false_when_registry_absent():
+    from whisperapp.watcher import _mic_in_use_win
+    import winreg
+    with patch("winreg.OpenKey", side_effect=OSError):
+        result = _mic_in_use_win()
+    assert result is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_mic_key_active_true_when_stop_is_zero():
+    from whisperapp.watcher import _mic_key_active
+    import winreg
+    mock_key = MagicMock()
+    with patch("winreg.QueryValueEx", side_effect=[
+        (100, winreg.REG_QWORD),  # LastUsedTimeStart = 100
+        (0,   winreg.REG_QWORD),  # LastUsedTimeStop  = 0 → active
+    ]):
+        result = _mic_key_active(mock_key)
+    assert result is True
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_mic_key_active_false_when_stop_after_start():
+    from whisperapp.watcher import _mic_key_active
+    import winreg
+    mock_key = MagicMock()
+    with patch("winreg.QueryValueEx", side_effect=[
+        (100, winreg.REG_QWORD),  # LastUsedTimeStart = 100
+        (200, winreg.REG_QWORD),  # LastUsedTimeStop  = 200 > start → not active
+    ]):
+        result = _mic_key_active(mock_key)
+    assert result is False
