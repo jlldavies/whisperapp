@@ -216,14 +216,13 @@ class StreamingEngine:
     ):
         self.model_size = model_size
         if device == "auto":
-            import torch
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            from whisperapp.worker import _WHISPER_DEVICE, _COMPUTE_TYPE as _CT
+            self.device = _WHISPER_DEVICE
+            _auto_compute = _CT
         else:
             self.device = device
-        if compute_type == "auto":
-            self.compute_type = "float16" if self.device == "cuda" else "float32"
-        else:
-            self.compute_type = compute_type
+            _auto_compute = "float16" if device == "cuda" else "int8"
+        self.compute_type = compute_type if compute_type != "auto" else _auto_compute
 
         self._model = None
         self._buffer = AudioBuffer(
@@ -344,11 +343,12 @@ class StreamingEngine:
         _progress("preparing", f"{duration_sec:.0f}s of audio on {self.device}")
 
         import whisperx
+        from whisperapp.worker import _WHISPER_DEVICE, _DIARIZE_DEVICE, _COMPUTE_TYPE
 
         # Stage 1: Transcribe
         _progress("transcribing", "loading WhisperX model...")
         model = whisperx.load_model(
-            self.model_size, device=self.device, compute_type=self.compute_type
+            self.model_size, device=_WHISPER_DEVICE, compute_type=_COMPUTE_TYPE
         )
         _progress("transcribing", "running transcription...")
         result = model.transcribe(raw_audio, batch_size=8, language="en")
@@ -359,11 +359,11 @@ class StreamingEngine:
         language = result.get("language", "en")
         _progress("aligning", f"loading alignment model (lang={language})...")
         align_model, metadata = whisperx.load_align_model(
-            language_code=language, device=self.device
+            language_code=language, device=_WHISPER_DEVICE
         )
         _progress("aligning", "running alignment...")
         aligned = whisperx.align(
-            result["segments"], align_model, metadata, raw_audio, device=self.device
+            result["segments"], align_model, metadata, raw_audio, device=_WHISPER_DEVICE
         )
         del align_model
         _progress("aligning", "done")
@@ -381,7 +381,7 @@ class StreamingEngine:
                     tmp_path = f.name
 
                 diarize_pipeline = DiarizationPipeline(
-                    token=hf_token, device=self.device
+                    token=hf_token, device=_DIARIZE_DEVICE
                 )
                 _progress("diarizing", "assigning speakers...")
                 diarize_segments = diarize_pipeline(tmp_path)

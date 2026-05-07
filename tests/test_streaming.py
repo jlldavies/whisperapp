@@ -388,7 +388,8 @@ class TestDeviceAutoDetection:
         from whisperapp.streaming import StreamingEngine
         engine = StreamingEngine(device="auto", compute_type="auto")
         assert engine.device == "cpu"
-        assert engine.compute_type == "float32"
+        # CPU auto-detection now uses int8 (faster than float32 on modern CPUs)
+        assert engine.compute_type == "int8"
 
     def test_streaming_engine_explicit_device_respected(self):
         from whisperapp.streaming import StreamingEngine

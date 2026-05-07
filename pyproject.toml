@@ -29,6 +29,9 @@ dependencies = [
 claude = ["anthropic>=0.25"]
 openai = ["openai>=1.0"]
 # Ollama uses requests (already a core dependency) — no extra package needed
+# Apple Silicon GPU acceleration for Whisper transcription
+# Requires Apple Silicon Mac (M1/M2/M3/M4). Not needed on Intel Mac or Windows/Linux.
+mac-gpu = ["mlx-whisper"]
 # Convenience bundles
 ai-all = ["anthropic>=0.25", "openai>=1.0"]
 dev = ["pytest", "pytest-asyncio"]

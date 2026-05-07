@@ -1,3 +1,4 @@
+import gc
 import threading
 import time
 from pathlib import Path
@@ -7,8 +8,69 @@ from whisperx.diarize import DiarizationPipeline
 from whisperapp.queue import JobQueue, JobStatus
 from whisperapp.checkpoints import CheckpointManager
 
-_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-_COMPUTE_TYPE = "float16" if _DEVICE == "cuda" else "float32"
+def _detect_device() -> tuple[str, str, str]:
+    """
+    Return (whisper_device, diarize_device, compute_type).
+
+    Whisper uses faster-whisper / ctranslate2, which only supports CUDA and CPU.
+    Pyannote (diarization) is pure PyTorch and supports MPS on Apple Silicon.
+
+    Compute types:
+      CUDA  → float16  (fast, memory-efficient on GPU)
+      CPU   → int8     (2-4x faster than float32 on modern CPUs including Apple Silicon)
+    """
+    import sys
+
+    if torch.cuda.is_available():
+        return "cuda", "cuda", "float16"
+
+    if sys.platform == "darwin" and torch.backends.mps.is_available():
+        # ctranslate2 cannot use MPS — Whisper runs on CPU with int8.
+        # Pyannote CAN use MPS — use it for diarization.
+        return "cpu", "mps", "int8"
+
+    return "cpu", "cpu", "int8"
+
+
+_WHISPER_DEVICE, _DIARIZE_DEVICE, _COMPUTE_TYPE = _detect_device()
+# Legacy alias kept for any code referencing _DEVICE
+_DEVICE = _WHISPER_DEVICE
+
+
+def _has_mlx_whisper() -> bool:
+    """True if mlx-whisper is installed (Apple Silicon fast path)."""
+    try:
+        import mlx_whisper  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _cleanup_memory():
+    """Force release of GPU/CPU memory between jobs.
+
+    Without this, sequential model loads on Windows + MKL fragment the heap
+    (mkl_malloc OOM) and CUDA contexts hold cached allocations that block the
+    next model load. Call from process_job's finally block and from
+    complete_with_result.
+    """
+    # Two passes — Python sometimes needs a second collect to reach cyclically
+    # referenced tensors that the first collect makes unreachable.
+    gc.collect()
+    gc.collect()
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+        except Exception:
+            pass
+    # MPS (Apple Silicon) — clear Metal buffer pool
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        try:
+            torch.mps.empty_cache()
+        except Exception:
+            pass
 
 # ---------------------------------------------------------------------------
 # Stage definitions — each stage owns a slice of the 0-100 progress bar.
@@ -289,25 +351,76 @@ class Worker:
         cm = CheckpointManager(job["output_path"], job_id)
         hb = _Heartbeat(self.queue, job_id, "loading_model", interval=5.0).start()
 
+        # Local handles for explicit cleanup in finally — declared up-front so the
+        # finally block can safely `del` them whether or not the try-block reached
+        # the corresponding stage.
+        model = None
+        audio = None
+        align_model = None
+        metadata = None
+        diarize_model = None
+        diarize_segments = None
+        result = None
+        aligned = None
+        result_diarized = None
+        final_result = None
+
         try:
             # --- Stage 1a: Load model ---
             if not cm.has("transcription"):
                 hb.update("loading_model")
-                model = whisperx.load_model(job["model"], device=_DEVICE,
-                                             compute_type=_COMPUTE_TYPE)
 
                 # --- Stage 1b: Load audio ---
                 hb.update("loading_audio")
                 audio = whisperx.load_audio(job["file_path"])
 
-                # --- Stage 2: Transcribe (with live progress) ---
+                # --- Stage 2: Transcribe ---
                 hb.update("transcribing")
-                model.transcribe = _patched_transcribe(
-                    model.transcribe, self.queue, job_id, hb)
-                result = model.transcribe(audio, batch_size=8, language="en")
+
+                if _has_mlx_whisper() and _WHISPER_DEVICE == "cpu":
+                    # Apple Silicon fast path: mlx-whisper uses the Metal GPU
+                    # directly via Apple's MLX framework — much faster than
+                    # ctranslate2 on CPU for the same model size.
+                    import mlx_whisper
+                    _MLX_MODEL_MAP = {
+                        "tiny": "mlx-community/whisper-tiny-mlx",
+                        "base": "mlx-community/whisper-base-mlx",
+                        "small": "mlx-community/whisper-small-mlx",
+                        "medium": "mlx-community/whisper-medium-mlx",
+                        "large-v2": "mlx-community/whisper-large-v2-mlx",
+                    }
+                    mlx_model = _MLX_MODEL_MAP.get(job["model"],
+                                                   "mlx-community/whisper-large-v2-mlx")
+                    raw = mlx_whisper.transcribe(
+                        job["file_path"],
+                        path_or_hf_repo=mlx_model,
+                        word_timestamps=True,
+                    )
+                    # Normalise to whisperx segment format
+                    result = {
+                        "segments": [
+                            {"text": seg["text"],
+                             "start": round(seg["start"], 3),
+                             "end": round(seg["end"], 3)}
+                            for seg in raw.get("segments", [])
+                        ],
+                        "language": raw.get("language", "en"),
+                    }
+                else:
+                    model = whisperx.load_model(job["model"],
+                                                device=_WHISPER_DEVICE,
+                                                compute_type=_COMPUTE_TYPE)
+                    model.transcribe = _patched_transcribe(
+                        model.transcribe, self.queue, job_id, hb)
+                    result = model.transcribe(audio, batch_size=8, language="en")
+                    del model; model = None
 
                 cm.save("transcription", result)
-                del model
+                # Release audio buffer; can be 500MB+ for a long recording.
+                del audio; audio = None
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             else:
                 result = cm.load("transcription")
 
@@ -320,16 +433,21 @@ class Worker:
                 hb.update("aligning",
                            detail=f"{STAGES['aligning']['label']} — 0/{total_segs} segments")
                 align_model, metadata = whisperx.load_align_model(
-                    language_code=result["language"], device=_DEVICE)
+                    language_code=result["language"], device=_WHISPER_DEVICE)
 
                 # Capture print_progress output to update DB per-segment
                 aligned = _tracked_align(
                     whisperx.align, result["segments"], align_model,
-                    metadata, job["file_path"], _DEVICE,
+                    metadata, job["file_path"], _WHISPER_DEVICE,
                     self.queue, job_id, hb)
 
                 cm.save("alignment", aligned)
-                del align_model
+                # Release alignment model + metadata; ~300 MB combined.
+                del align_model; align_model = None
+                del metadata; metadata = None
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             else:
                 aligned = cm.load("alignment")
 
@@ -340,7 +458,7 @@ class Worker:
             if job["diarize"] and not cm.has("diarization"):
                 hb.update("diarizing")
                 diarize_model = DiarizationPipeline(
-                    token=self.hf_token, device=_DEVICE)
+                    token=self.hf_token, device=_DIARIZE_DEVICE)
 
                 # Hook into pyannote's pipeline progress
                 _install_diarize_hook(
@@ -354,6 +472,12 @@ class Worker:
                     diarize_segments, aligned)
                 cm.save("diarization", result_diarized)
                 final_result = result_diarized
+                # Release diarization pipeline + segments; ~500 MB+
+                del diarize_model; diarize_model = None
+                del diarize_segments; diarize_segments = None
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             elif cm.has("diarization"):
                 final_result = cm.load("diarization")
             else:
@@ -376,15 +500,29 @@ class Worker:
             raise
         finally:
             hb.stop()
+            # Best-effort release of any locals still alive (handles partial
+            # failure paths). Each `del` is wrapped because some may already be
+            # None or never assigned.
+            for name in ('model', 'audio', 'align_model', 'metadata',
+                         'diarize_model', 'diarize_segments',
+                         'result', 'aligned', 'result_diarized', 'final_result'):
+                try:
+                    del locals()[name]
+                except Exception:
+                    pass
+            _cleanup_memory()
 
     def complete_with_result(self, job_id: str, renamed_segments: dict):
         """Called after speaker review is complete (names applied or skipped)."""
-        job = self.queue.get_job(job_id)
-        cm = CheckpointManager(job["output_path"], job_id)
-        cm.save("saving", renamed_segments)
-        self._write_outputs(job, renamed_segments, cm)
-        self.queue.complete_job(job_id, job["output_path"])
-        cm.cleanup()
+        try:
+            job = self.queue.get_job(job_id)
+            cm = CheckpointManager(job["output_path"], job_id)
+            cm.save("saving", renamed_segments)
+            self._write_outputs(job, renamed_segments, cm)
+            self.queue.complete_job(job_id, job["output_path"])
+            cm.cleanup()
+        finally:
+            _cleanup_memory()
 
     def _write_outputs(self, job, result, cm: CheckpointManager):
         from whisperapp.formatters import write_formats

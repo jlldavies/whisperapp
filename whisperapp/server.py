@@ -105,6 +105,35 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
             "ai_available": ai.is_available(),
         }
 
+    @app.get("/info")
+    async def info():
+        """Runtime information: device selection, acceleration, versions."""
+        import sys
+        import torch
+        from whisperapp.worker import (
+            _WHISPER_DEVICE, _DIARIZE_DEVICE, _COMPUTE_TYPE, _has_mlx_whisper
+        )
+        return {
+            "platform": sys.platform,
+            "python": sys.version.split()[0],
+            "torch": torch.__version__,
+            "whisper_device": _WHISPER_DEVICE,
+            "diarize_device": _DIARIZE_DEVICE,
+            "compute_type": _COMPUTE_TYPE,
+            "cuda_available": torch.cuda.is_available(),
+            "mps_available": (
+                hasattr(torch.backends, "mps")
+                and torch.backends.mps.is_available()
+            ),
+            "mlx_whisper_available": _has_mlx_whisper(),
+            "acceleration": (
+                "CUDA" if _WHISPER_DEVICE == "cuda"
+                else "MLX (Apple Silicon)" if _has_mlx_whisper()
+                else "MPS (diarization only)" if _DIARIZE_DEVICE == "mps"
+                else "CPU"
+            ),
+        }
+
     @app.post("/transcribe")
     async def transcribe(req: TranscribeRequest):
         try:

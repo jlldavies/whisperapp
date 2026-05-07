@@ -86,6 +86,34 @@ def get_transcript(job_id, fmt):
     r.raise_for_status()
     click.echo(r.json()["content"])
 
+@cli.command("info")
+def info():
+    """Show device and acceleration information."""
+    try:
+        r = requests.get(f"{API_BASE}/info", timeout=5)
+        r.raise_for_status()
+        d = r.json()
+        click.echo(f"Platform:        {d['platform']}")
+        click.echo(f"Acceleration:    {d['acceleration']}")
+        click.echo(f"Whisper device:  {d['whisper_device']}  ({d['compute_type']})")
+        click.echo(f"Diarize device:  {d['diarize_device']}")
+        click.echo(f"CUDA:            {d['cuda_available']}")
+        click.echo(f"MPS (Apple):     {d['mps_available']}")
+        click.echo(f"MLX Whisper:     {d['mlx_whisper_available']}")
+    except requests.ConnectionError:
+        # Fall back to direct detection when daemon isn't running
+        import sys, torch
+        from whisperapp.worker import (
+            _WHISPER_DEVICE, _DIARIZE_DEVICE, _COMPUTE_TYPE, _has_mlx_whisper
+        )
+        click.echo(f"Platform:        {sys.platform}  [daemon not running]")
+        click.echo(f"Whisper device:  {_WHISPER_DEVICE}  ({_COMPUTE_TYPE})")
+        click.echo(f"Diarize device:  {_DIARIZE_DEVICE}")
+        click.echo(f"CUDA:            {torch.cuda.is_available()}")
+        click.echo(f"MPS (Apple):     {hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()}")
+        click.echo(f"MLX Whisper:     {_has_mlx_whisper()}")
+
+
 @cli.command("ai-status")
 def ai_status():
     """Show configured AI provider and whether it is reachable."""
