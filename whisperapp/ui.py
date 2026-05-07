@@ -197,6 +197,15 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
                     with gr.Row():
                         refresh_btn = gr.Button("Refresh")
                         clear_queue_btn = gr.Button("Clear Queue", variant="stop")
+                    with gr.Row():
+                        meeting_notes_job_id = gr.Textbox(
+                            label="Job ID for meeting notes",
+                            placeholder="Paste a completed job ID",
+                            scale=3,
+                        )
+                        meeting_notes_btn = gr.Button("Generate Meeting Notes (AI)", scale=1)
+                    meeting_notes_out = gr.Textbox(
+                        label="Meeting Notes", lines=10, interactive=False)
 
                     # Inline speaker review panel (appears when a job needs review)
                     review_panel = gr.Group(visible=False)
@@ -213,8 +222,8 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
                             lines=4,
                             placeholder="SPEAKER_00=Alice\nSPEAKER_01=Bob")
                         with gr.Row():
-                            inline_skip_btn = gr.Button(
-                                "Skip (use default labels)")
+                            inline_ai_btn = gr.Button("Auto-identify (AI)")
+                            inline_skip_btn = gr.Button("Skip (use default labels)")
                             inline_confirm_btn = gr.Button(
                                 "Confirm Names", variant="primary")
 
@@ -286,6 +295,37 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
                 outputs=_review_outputs
             )
 
+            def _inline_ai_identify(job_id):
+                """Use AI provider to suggest speaker names and pre-fill the text box."""
+                if not job_id:
+                    return "No job selected.", ""
+                from whisperapp.config import Config
+                from whisperapp.ai import make_provider
+                from whisperapp.checkpoints import CheckpointManager as CM
+                from whisperapp.speakers import extract_speaker_snippets as ess
+                cfg = Config()
+                ai = make_provider(cfg.ai_provider, cfg.ai_api_key,
+                                   cfg.ai_model, cfg.ai_base_url)
+                if not ai.is_available():
+                    return "No AI provider configured — set one in Settings.", ""
+                job = queue.get_job(job_id)
+                if not job:
+                    return "Job not found.", ""
+                cm = CM(job["output_path"], job_id)
+                result = cm.load("speaker_review")
+                snippets = ess(result)
+                mapping = ai.identify_speakers(snippets)
+                if not mapping:
+                    return "AI could not identify speakers.", ""
+                prefill = "\n".join(
+                    f"{label}={name}" for label, name in sorted(mapping.items()))
+                return f"AI suggestions ({ai.name}):", prefill
+
+            inline_ai_btn.click(
+                fn=lambda jid: _inline_ai_identify(jid),
+                inputs=[inline_review_job_id],
+                outputs=[inline_review_status, inline_names],
+            )
             inline_confirm_btn.click(
                 fn=lambda jid, names: _inline_confirm(
                     worker, queue, jid, names),
@@ -323,6 +363,44 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
             clear_queue_btn.click(
                 fn=lambda: clear_all_jobs(queue),
                 outputs=_review_outputs
+            )
+
+            def generate_meeting_notes(job_id):
+                if not job_id.strip():
+                    return "Enter a job ID."
+                from whisperapp.config import Config
+                from whisperapp.ai import make_provider
+                from whisperapp.sanitise import sanitise_job_id
+                try:
+                    sanitise_job_id(job_id.strip())
+                except ValueError:
+                    return "Invalid job ID format."
+                cfg = Config()
+                ai = make_provider(cfg.ai_provider, cfg.ai_api_key,
+                                   cfg.ai_model, cfg.ai_base_url)
+                if not ai.is_available():
+                    return "No AI provider configured — set one in the Settings tab."
+                job = queue.get_job(job_id.strip())
+                if not job:
+                    return "Job not found."
+                if job["status"] != "done":
+                    return f"Job is not done yet (status: {job['status']})."
+                from pathlib import Path as _Path
+                txt_file = _Path(job["output_path"]) / f"{_Path(job['file_path']).stem}.txt"
+                if not txt_file.exists():
+                    return "No .txt transcript found for this job."
+                transcript = txt_file.read_text(encoding="utf-8")
+                notes = ai.meeting_notes(transcript)
+                if not notes:
+                    return "AI returned an empty response."
+                notes_file = txt_file.with_suffix(".notes.md")
+                notes_file.write_text(notes, encoding="utf-8")
+                return f"Saved to {notes_file}\n\n{notes}"
+
+            meeting_notes_btn.click(
+                fn=generate_meeting_notes,
+                inputs=[meeting_notes_job_id],
+                outputs=meeting_notes_out,
             )
 
         with gr.Tab("Speaker Review"):
@@ -633,6 +711,8 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
         with gr.Tab("Settings"):
             from whisperapp.config import Config
             cfg = Config()
+
+            gr.Markdown("### Transcription")
             hf_token_input = gr.Textbox(
                 label="HuggingFace Token",
                 value=cfg.hf_token,
@@ -642,14 +722,50 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
                 value=cfg.default_model, label="Default Model")
             startup_check = gr.Checkbox(
                 label="Start on login", value=True)
-            save_btn = gr.Button("Save Settings")
 
-            def save_settings(token, model, startup):
+            gr.Markdown("### AI Features (optional)")
+            gr.Markdown(
+                "Enable an AI provider to get automatic speaker identification, "
+                "meeting notes, and live summaries. All features work without AI — "
+                "speaker labels can always be set manually."
+            )
+            ai_provider_select = gr.Dropdown(
+                choices=["none", "claude", "openai", "ollama"],
+                value=cfg.ai_provider,
+                label="AI Provider",
+            )
+            ai_api_key_input = gr.Textbox(
+                label="API Key (Claude / OpenAI)",
+                value=cfg.ai_api_key,
+                type="password",
+                placeholder="Not needed for Ollama",
+            )
+            ai_model_input = gr.Textbox(
+                label="Model (leave blank for provider default)",
+                value=cfg.ai_model,
+                placeholder="e.g. gpt-4o, claude-haiku-4-5-20251001, llama3.2",
+            )
+            ai_base_url_input = gr.Textbox(
+                label="Base URL (Ollama or OpenAI-compatible endpoint)",
+                value=cfg.ai_base_url,
+                placeholder="http://localhost:11434",
+            )
+            with gr.Row():
+                save_btn = gr.Button("Save Settings", variant="primary")
+                test_ai_btn = gr.Button("Test AI Connection")
+
+            settings_out = gr.Textbox(label="", interactive=False)
+
+            def save_settings(token, model, startup, ai_prov, ai_key, ai_mod, ai_url):
                 from whisperapp.config import Config as Cfg
                 from whisperapp.startup import register_startup, unregister_startup
                 c = Cfg()
                 c.hf_token = token
                 c.default_model = model
+                c.ai_provider = ai_prov
+                c.ai_api_key = ai_key
+                c.ai_model = ai_mod
+                c.ai_base_url = ai_url
                 c.save()
                 if startup:
                     register_startup()
@@ -657,11 +773,27 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
                     unregister_startup()
                 return "Settings saved"
 
-            settings_out = gr.Textbox(label="", interactive=False)
+            def test_ai_connection(ai_prov, ai_key, ai_mod, ai_url):
+                from whisperapp.ai import make_provider
+                provider = make_provider(ai_prov, ai_key, ai_mod, ai_url)
+                if provider.name == "none":
+                    return "No AI provider selected."
+                if provider.is_available():
+                    return f"{provider.name} — connection OK"
+                return f"{provider.name} — not reachable (check key/URL/server)"
+
             save_btn.click(
                 fn=save_settings,
-                inputs=[hf_token_input, default_model, startup_check],
-                outputs=settings_out
+                inputs=[hf_token_input, default_model, startup_check,
+                        ai_provider_select, ai_api_key_input,
+                        ai_model_input, ai_base_url_input],
+                outputs=settings_out,
+            )
+            test_ai_btn.click(
+                fn=test_ai_connection,
+                inputs=[ai_provider_select, ai_api_key_input,
+                        ai_model_input, ai_base_url_input],
+                outputs=settings_out,
             )
 
     return demo

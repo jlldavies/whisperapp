@@ -86,5 +86,70 @@ def get_transcript(job_id, fmt):
     r.raise_for_status()
     click.echo(r.json()["content"])
 
+@cli.command("ai-status")
+def ai_status():
+    """Show configured AI provider and whether it is reachable."""
+    try:
+        r = requests.get(f"{API_BASE}/ai/status", timeout=5)
+        r.raise_for_status()
+        d = r.json()
+        available = "OK" if d["available"] else "not reachable"
+        click.echo(f"Provider: {d['provider']}  ({available})")
+    except requests.ConnectionError:
+        # Fall back to reading config directly when daemon isn't running
+        from whisperapp.ai import make_provider
+        from whisperapp.config import Config
+        cfg = Config()
+        ai = make_provider(cfg.ai_provider, cfg.ai_api_key, cfg.ai_model, cfg.ai_base_url)
+        available = "OK" if ai.is_available() else "not reachable"
+        click.echo(f"Provider: {ai.name}  ({available})  [daemon not running]")
+
+
+@cli.command("identify-speakers")
+@click.argument("job_id")
+@click.option("--context", "-c", default="",
+              help="Meeting context to help the AI (e.g. 'Weekly standup: Alice, Bob, Carol')")
+def identify_speakers(job_id, context):
+    """Use the configured AI provider to suggest speaker names for a job."""
+    try:
+        r = requests.post(f"{API_BASE}/ai/identify-speakers",
+                          json={"job_id": job_id, "context": context}, timeout=60)
+    except requests.ConnectionError:
+        click.echo("Error: WhisperApp is not running.", err=True)
+        raise SystemExit(1)
+    if r.status_code == 503:
+        click.echo("No AI provider configured. Set ai_provider in Settings.", err=True)
+        raise SystemExit(1)
+    r.raise_for_status()
+    d = r.json()
+    if not d["mapping"]:
+        click.echo("AI could not identify any speakers.")
+        return
+    click.echo(f"Suggestions from {d['provider']}:")
+    for label, name in sorted(d["mapping"].items()):
+        click.echo(f"  {label} → {name}")
+
+
+@cli.command("meeting-notes")
+@click.argument("job_id")
+@click.option("--context", "-c", default="", help="Meeting context")
+def meeting_notes(job_id, context):
+    """Generate meeting notes from a completed transcript using AI."""
+    try:
+        r = requests.post(f"{API_BASE}/ai/meeting-notes",
+                          json={"job_id": job_id, "context": context}, timeout=120)
+    except requests.ConnectionError:
+        click.echo("Error: WhisperApp is not running.", err=True)
+        raise SystemExit(1)
+    if r.status_code == 503:
+        click.echo("No AI provider configured. Set ai_provider in Settings.", err=True)
+        raise SystemExit(1)
+    r.raise_for_status()
+    d = r.json()
+    click.echo(f"Saved to: {d['saved_to']}")
+    click.echo()
+    click.echo(d["notes"])
+
+
 def main():
     cli()

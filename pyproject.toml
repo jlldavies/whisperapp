@@ -25,6 +25,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# AI provider SDKs — install only what you need
+claude = ["anthropic>=0.25"]
+openai = ["openai>=1.0"]
+# Ollama uses requests (already a core dependency) — no extra package needed
+# Convenience bundles
+ai-all = ["anthropic>=0.25", "openai>=1.0"]
 dev = ["pytest", "pytest-asyncio"]
 build = ["pyinstaller>=6.0"]
 

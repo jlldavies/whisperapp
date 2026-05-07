@@ -62,8 +62,23 @@ class StreamPolishRequest(BaseModel):
     hf_token: str = ""
 
 
+class AIIdentifySpeakersRequest(BaseModel):
+    job_id: str
+    context: str = ""   # e.g. "Weekly standup between Alice, Bob, Carol"
+
+
+class AIMeetingNotesRequest(BaseModel):
+    job_id: str
+    context: str = ""
+
+
+class AILiveSummaryRequest(BaseModel):
+    transcript: str
+    context: str = ""
+
+
 def create_app(queue: JobQueue, worker) -> FastAPI:
-    app = FastAPI(title="WhisperApp MCP Server", version="1.0.0")
+    app = FastAPI(title="WhisperApp API", version="1.1.0")
 
     # In-memory streaming sessions (local-only server, so this is fine)
     _sessions: dict = {}
@@ -75,9 +90,20 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
             return Response("Forbidden — local connections only", status_code=403)
         return await call_next(request)
 
+    def _ai():
+        from whisperapp.config import Config
+        from whisperapp.ai import make_provider
+        cfg = Config()
+        return make_provider(cfg.ai_provider, cfg.ai_api_key, cfg.ai_model, cfg.ai_base_url)
+
     @app.get("/health")
     async def health():
-        return {"status": "ok"}
+        ai = _ai()
+        return {
+            "status": "ok",
+            "ai_provider": ai.name,
+            "ai_available": ai.is_available(),
+        }
 
     @app.post("/transcribe")
     async def transcribe(req: TranscribeRequest):
@@ -178,6 +204,78 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         renamed = apply_speaker_names(result, req.names)
         worker.complete_with_result(job_id, renamed)
         return {"success": True}
+
+    # -----------------------------------------------------------------------
+    # AI endpoints (all return 503 if no provider configured — never hard-fail)
+    # -----------------------------------------------------------------------
+
+    @app.get("/ai/status")
+    async def ai_status():
+        ai = _ai()
+        return {"provider": ai.name, "available": ai.is_available()}
+
+    @app.post("/ai/identify-speakers")
+    async def ai_identify_speakers(req: AIIdentifySpeakersRequest):
+        try:
+            sanitise_job_id(req.job_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid job_id")
+        ai = _ai()
+        if not ai.is_available():
+            raise HTTPException(
+                status_code=503,
+                detail="No AI provider configured. Set ai_provider in Settings.")
+        job = queue.get_job(req.job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job["status"] not in (JobStatus.SPEAKER_REVIEW, JobStatus.DONE):
+            raise HTTPException(status_code=409,
+                                detail=f"Job not ready for speaker review: {job['status']}")
+        cm = CheckpointManager(job["output_path"], req.job_id)
+        result = cm.load("speaker_review")
+        from whisperapp.speakers import extract_speaker_snippets
+        snippets = extract_speaker_snippets(result)
+        mapping = ai.identify_speakers(snippets, context=req.context)
+        return {"mapping": mapping, "provider": ai.name}
+
+    @app.post("/ai/meeting-notes")
+    async def ai_meeting_notes(req: AIMeetingNotesRequest):
+        try:
+            sanitise_job_id(req.job_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid job_id")
+        ai = _ai()
+        if not ai.is_available():
+            raise HTTPException(status_code=503,
+                                detail="No AI provider configured.")
+        job = queue.get_job(req.job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job["status"] != JobStatus.DONE:
+            raise HTTPException(status_code=409,
+                                detail=f"Job not done: {job['status']}")
+        txt_file = Path(job["output_path"]) / f"{Path(job['file_path']).stem}.txt"
+        if not txt_file.exists():
+            raise HTTPException(status_code=404,
+                                detail="txt transcript not found for this job")
+        transcript = txt_file.read_text(encoding="utf-8")
+        notes = ai.meeting_notes(transcript, context=req.context)
+        if not notes:
+            raise HTTPException(status_code=500,
+                                detail="AI provider returned empty response")
+        # Save alongside the transcript
+        notes_file = txt_file.with_suffix(".notes.md")
+        notes_file.write_text(notes, encoding="utf-8")
+        return {"notes": notes, "saved_to": str(notes_file), "provider": ai.name}
+
+    @app.post("/ai/live-summary")
+    async def ai_live_summary(req: AILiveSummaryRequest):
+        ai = _ai()
+        if not ai.is_available():
+            raise HTTPException(status_code=503,
+                                detail="No AI provider configured.")
+        summary = ai.live_summary(req.transcript)
+        return {"summary": summary, "provider": ai.name}
 
     # -----------------------------------------------------------------------
     # Streaming endpoints
