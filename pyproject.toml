@@ -19,8 +19,7 @@ dependencies = [
     # pip/uv skips this automatically on Windows, Linux, and Intel Mac.
     "mlx-whisper; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # UI and API
-    "gradio>=4.0",
-    "fastapi",
+"fastapi",
     "uvicorn[standard]",
     "pystray",
     "Pillow",
