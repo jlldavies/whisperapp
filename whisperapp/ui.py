@@ -50,12 +50,57 @@ def _list_input_devices():
     return devices
 
 
+def _monitor_all_devices(duration_sec=2.0):
+    """Sample every input device and return a markdown table of RMS signal levels."""
+    import pyaudio
+    import numpy as np
+
+    devices = _list_input_devices()
+    if not devices:
+        return "No input devices found."
+
+    p = pyaudio.PyAudio()
+    rows = []
+    for label, (dev_idx, sr, _channels) in devices.items():
+        try:
+            chunk = int(sr * duration_sec)
+            stream = p.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=sr,
+                input=True,
+                input_device_index=dev_idx,
+                frames_per_buffer=chunk,
+            )
+            data = stream.read(chunk, exception_on_overflow=False)
+            stream.stop_stream()
+            stream.close()
+            audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            rms = float(np.sqrt(np.mean(audio ** 2)))
+            peak = float(np.abs(audio).max())
+            bar = "#" * min(int(rms * 400), 30)
+            if rms > 0.005:
+                signal = "** SIGNAL **"
+            elif rms > 0.0005:
+                signal = "low / noise"
+            else:
+                signal = "silent"
+            rows.append(f"| {label} | {rms:.4f} | {peak:.4f} | {bar:<30} | {signal} |")
+        except Exception as e:
+            rows.append(f"| {label} | ERROR | — | — | {e} |")
+
+    p.terminate()
+    header = "| Device | RMS | Peak | Level | Signal? |\n|--------|-----|------|-------|---------|"
+    return header + "\n" + "\n".join(rows)
+
+
 # Global capture state shared between UI callbacks and capture thread
 _capture_lock = None
 _capture_thread = None
 _capture_running = False
 _capture_engine = None
 _capture_transcript = ""
+_capture_session_file = None  # Path to the live session .txt file being appended
 
 
 def _capture_loop(device_index, sample_rate, channels, model_size, max_chunk_sec, vad_threshold):
@@ -63,7 +108,7 @@ def _capture_loop(device_index, sample_rate, channels, model_size, max_chunk_sec
     import pyaudio
     import numpy as np
     import logging
-    global _capture_running, _capture_engine, _capture_transcript
+    global _capture_running, _capture_engine, _capture_transcript, _capture_session_file
 
     log = logging.getLogger("whisperapp.live")
     from whisperapp.streaming import StreamingEngine
@@ -98,10 +143,18 @@ def _capture_loop(device_index, sample_rate, channels, model_size, max_chunk_sec
             new_text = engine.process_chunk(sample_rate, audio)
             if new_text:
                 # Each utterance on a new line for visual speaker separation
+                utterance = new_text.strip()
                 if _capture_transcript:
-                    _capture_transcript += "\n" + new_text.strip()
+                    _capture_transcript += "\n" + utterance
                 else:
-                    _capture_transcript = new_text.strip()
+                    _capture_transcript = utterance
+                # Persist immediately so nothing is lost on crash/shutdown
+                if _capture_session_file:
+                    try:
+                        with open(_capture_session_file, "a", encoding="utf-8") as fh:
+                            fh.write(utterance + "\n")
+                    except Exception:
+                        pass
 
         stream.stop_stream()
         stream.close()
@@ -368,6 +421,23 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
                     scale=1,
                 )
 
+            with gr.Row():
+                check_levels_btn = gr.Button("Check Levels (2s sample all devices)")
+                with gr.Column():
+                    gr.Markdown(
+                        "_Samples every input device for 2 seconds. "
+                        "Look for **SIGNAL** on the device carrying your audio. "
+                        "Wave Link exposes Stream Mix, Local Mix, and per-app channels — "
+                        "pick whichever shows signal._"
+                    )
+            levels_out = gr.Markdown(value="")
+
+            check_levels_btn.click(
+                fn=_monitor_all_devices,
+                inputs=[],
+                outputs=levels_out,
+            )
+
             live_transcript = gr.Textbox(
                 label="Live Transcript",
                 lines=20,
@@ -403,13 +473,26 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
 
             def start_capture(device_name, model):
                 import threading
-                global _capture_thread, _capture_running, _capture_transcript
+                from datetime import datetime
+                global _capture_thread, _capture_running, _capture_transcript, _capture_session_file
                 if device_name not in devices:
                     return "Device not found.", "", gr.Timer(active=False)
                 dev_idx, dev_sr, dev_ch = devices[device_name]
 
                 from whisperapp.config import Config
                 cfg = Config()
+
+                # Create a timestamped session file; appended to on every utterance
+                session_stem = f"live_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}"
+                session_dir = Path(cfg.default_output_path) if cfg.default_output_path else Path.home() / "Downloads"
+                session_dir.mkdir(parents=True, exist_ok=True)
+                _capture_session_file = str(session_dir / f"{session_stem}_live.txt")
+                try:
+                    with open(_capture_session_file, "w", encoding="utf-8") as fh:
+                        fh.write(f"# WhisperApp live session — {datetime.now().isoformat()}\n")
+                        fh.write(f"# Device: {device_name}\n\n")
+                except Exception:
+                    _capture_session_file = None
 
                 _capture_running = True
                 _capture_transcript = ""
@@ -420,7 +503,8 @@ def create_ui(queue: JobQueue, worker) -> gr.Blocks:
                     daemon=True,
                 )
                 _capture_thread.start()
-                return f"Recording from: {device_name}", "RECORDING", gr.Timer(active=True)
+                file_note = f"\nSaving to: {_capture_session_file}" if _capture_session_file else ""
+                return f"Recording from: {device_name}{file_note}", "RECORDING", gr.Timer(active=True)
 
             def poll_transcript():
                 import time

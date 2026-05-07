@@ -1,0 +1,149 @@
+{
+  "name": "whisperapp",
+  "version": "1.1.0",
+  "description": "Local speech transcription with speaker diarization. Supports file transcription, live streaming, and speaker review.",
+  "transport": "http",
+  "url": "http://127.0.0.1:7861",
+  "health_check": "http://127.0.0.1:7861/health",
+  "tools": [
+    {
+      "name": "transcribe",
+      "description": "Submit an audio or video file for transcription with optional speaker diarization.",
+      "method": "POST",
+      "path": "/transcribe",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "Absolute path to the audio/video file to transcribe."
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Directory to write output files. Defaults to ~/Downloads."
+          },
+          "model": {
+            "type": "string",
+            "enum": ["tiny", "base", "small", "medium", "large-v2"],
+            "default": "large-v2",
+            "description": "Whisper model size. Larger = more accurate but slower."
+          },
+          "diarize": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether to identify and label individual speakers."
+          },
+          "formats": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["txt", "srt", "vtt", "json", "tsv"] },
+            "default": ["txt", "srt", "vtt", "json"],
+            "description": "Output formats to generate."
+          }
+        },
+        "required": ["file_path"]
+      }
+    },
+    {
+      "name": "job_status",
+      "description": "Get the status and progress of a transcription job.",
+      "method": "GET",
+      "path": "/jobs/{job_id}",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "job_id": { "type": "string", "description": "UUID returned by the transcribe tool." }
+        },
+        "required": ["job_id"]
+      }
+    },
+    {
+      "name": "list_jobs",
+      "description": "List recent transcription jobs.",
+      "method": "GET",
+      "path": "/jobs",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["queued", "running", "done", "failed", "cancelled", "speaker_review"],
+            "description": "Filter by job status."
+          },
+          "limit": { "type": "integer", "default": 20 }
+        }
+      }
+    },
+    {
+      "name": "get_transcript",
+      "description": "Retrieve the text content of a completed transcript.",
+      "method": "GET",
+      "path": "/jobs/{job_id}/transcript",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "job_id": { "type": "string" },
+          "format": {
+            "type": "string",
+            "enum": ["txt", "srt", "vtt", "json", "tsv"],
+            "default": "txt"
+          }
+        },
+        "required": ["job_id"]
+      }
+    },
+    {
+      "name": "cancel_job",
+      "description": "Cancel a queued or running transcription job.",
+      "method": "POST",
+      "path": "/jobs/{job_id}/cancel",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "job_id": { "type": "string" }
+        },
+        "required": ["job_id"]
+      }
+    },
+    {
+      "name": "stream_start",
+      "description": "Start a live transcription streaming session.",
+      "method": "POST",
+      "path": "/stream/start",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "model": { "type": "string", "enum": ["tiny", "base", "small"], "default": "base" },
+          "sample_rate": { "type": "integer", "default": 16000 }
+        }
+      }
+    },
+    {
+      "name": "stream_chunk",
+      "description": "Send a chunk of base64-encoded float32 PCM audio to a streaming session.",
+      "method": "POST",
+      "path": "/stream/chunk",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" },
+          "audio_b64": { "type": "string", "description": "Base64-encoded float32 PCM bytes." },
+          "sample_rate": { "type": "integer", "default": 16000 }
+        },
+        "required": ["session_id", "audio_b64"]
+      }
+    },
+    {
+      "name": "stream_stop",
+      "description": "Stop a streaming session and retrieve the final transcript.",
+      "method": "POST",
+      "path": "/stream/stop",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "session_id": { "type": "string" }
+        },
+        "required": ["session_id"]
+      }
+    }
+  ]
+}

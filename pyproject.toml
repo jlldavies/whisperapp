@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "whisperapp"
+version = "1.1.0"
+description = "Local speech transcription with speaker diarization — web UI, system tray, CLI and REST API"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "whisperx",
+    "pyannote.audio",
+    "gradio>=4.0",
+    "fastapi",
+    "uvicorn[standard]",
+    "pystray",
+    "Pillow",
+    "bleach",
+    "httpx",
+    "click",
+    "requests",
+    "pyaudio",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+build = ["pyinstaller>=6.0"]
+
+[project.scripts]
+# CLI — runs headless, talks to a running daemon via REST
+whisperapp = "whisperapp.cli:main"
+
+[project.gui-scripts]
+# Full app with tray icon (no console window on Windows)
+whisperapp-app = "whisperapp.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["whisperapp*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

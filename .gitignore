@@ -27,10 +27,24 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # WhisperApp runtime
 *.db
 .whisperapp_partials/
+_launcher.log
+_launcher.err
+*.tmp.*
+
+# Build artefacts — rebuilt per platform, never committed
+dist/
+build/
+*.spec.log
+*.dSYM/
+
+# Installer output
+installer/WhisperApp*.exe
+installer/WhisperApp*.dmg
 
 # Test audio fixtures (generated)
 tests/fixtures/*.wav

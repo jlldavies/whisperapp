@@ -1,0 +1,35 @@
+# Dropbox selective sync exclusions for WhisperApp
+# Dropbox respects .dropboxignore on macOS/Windows clients (app v130+)
+
+# Python bytecode
+__pycache__
+*.pyc
+*.pyo
+
+# Virtual environments — large, platform-specific, rebuilt locally
+.venv
+venv
+env
+
+# PyInstaller build outputs — platform-specific binaries, very large
+dist
+build
+
+# Installer outputs
+installer/WhisperApp*.exe
+installer/WhisperApp*.dmg
+
+# Torch/model caches — very large, not code
+*.pt
+*.bin
+*.onnx
+
+# Runtime databases and logs
+*.db
+_launcher.log
+_launcher.err
+*.tmp.*
+
+# Test cache
+.pytest_cache
+htmlcov
