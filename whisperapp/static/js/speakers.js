@@ -53,8 +53,15 @@ async function loadPendingJobs(container) {
 }
 
 async function openJob(container, jobId) {
-  const job = await api.getJob(jobId);
-  const data = await api.getSpeakers(jobId);
+  let job, data;
+  try {
+    job = await api.getJob(jobId);
+    data = await api.getSpeakers(jobId);
+  } catch (err) {
+    const list = container.querySelector('#speakers-job-list');
+    if (list) list.innerHTML = `<div style="color:var(--signal-rec);font-size:12.5px">Error loading job: ${escHtml(String(err.message))}</div>`;
+    return;
+  }
   const speakers = data.speakers || [];
 
   container.querySelector('#speakers-sub').textContent =

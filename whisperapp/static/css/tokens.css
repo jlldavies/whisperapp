@@ -23,7 +23,7 @@
   --signal-wait:  oklch(70% 0.1 85);    /* amber */
 
   /* Type */
-  --font-sans: "Inter Display", "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-sans: "Inter Tight", "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   --radius-sm: 6px;

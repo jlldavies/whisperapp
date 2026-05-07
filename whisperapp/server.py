@@ -32,7 +32,7 @@ class TranscribeRequest(BaseModel):
     @field_validator("model")
     @classmethod
     def validate_model(cls, v):
-        allowed = {"tiny", "base", "small", "medium", "large-v2"}
+        allowed = {"tiny", "base", "small", "medium", "large-v2", "large-v3"}
         if v not in allowed:
             raise ValueError(f"model must be one of {allowed}")
         return v
@@ -354,6 +354,7 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
 
         result = session["engine"].stop()
         session["stopped"] = True
+        _sessions.pop(req.session_id, None)
         return {
             "text": result["text"],
             "segments": result["segments"],
@@ -426,7 +427,12 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
     async def upload_file(file: UploadFile):
         uploads_dir = _config_dir() / "uploads"
         uploads_dir.mkdir(parents=True, exist_ok=True)
-        suffix = Path(file.filename).suffix if file.filename else ".audio"
+        ALLOWED_UPLOAD_SUFFIXES = {
+            '.mp3', '.wav', '.m4a', '.mp4', '.mov', '.flac', '.ogg', '.webm', '.mkv'
+        }
+        suffix = Path(file.filename).suffix.lower() if file.filename else '.audio'
+        if suffix not in ALLOWED_UPLOAD_SUFFIXES:
+            suffix = '.audio'
         tmp_path = uploads_dir / (uuid.uuid4().hex + suffix)
         with open(tmp_path, "wb") as f:
             shutil.copyfileobj(file.file, f)

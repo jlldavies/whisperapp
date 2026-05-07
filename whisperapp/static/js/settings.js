@@ -161,7 +161,8 @@ function renderStartup(body, cfg) {
       ${toggleRow('Launch on login', false, 'launch_on_login')}
       ${toggleRow('Auto-update WhisperX on startup', true, 'auto_update')}
     </section>`;
-  wireToggles(body, cfg);
+  // Note: launch_on_login and auto_update are not yet persisted in config.
+  // Toggles are interactive visually but not wired to cfg until implemented.
 }
 
 function renderAPICLI(body) {
@@ -225,6 +226,21 @@ function renderSaveRow(body, cfg) {
       alert(`AI: ${res.ai_provider} — ${res.ai_available ? 'available' : 'not configured'}`);
     } catch {
       alert('Could not reach REST API at :7861');
+    }
+  });
+
+  body.querySelector('#reset-btn').addEventListener('click', () => {
+    if (confirm('Reset all settings to defaults?')) {
+      api.updateConfig({
+        default_model: 'large-v2',
+        streaming_model: 'base',
+        diarize_by_default: true,
+        default_output_path: '',
+        ai_provider: 'none',
+        ai_api_key: '',
+        ai_model: '',
+        ai_base_url: '',
+      }).then(() => location.reload()).catch(() => alert('Error resetting settings'));
     }
   });
 }

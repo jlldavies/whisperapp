@@ -166,7 +166,7 @@ async def test_stream_polish_before_stop(app_and_queue):
 
 @pytest.mark.asyncio
 async def test_stream_polish_after_stop(app_and_queue):
-    """Polish should work after stop."""
+    """Session is cleaned up by stop, so polish returns 404."""
     app, q = app_and_queue
 
     mock_engine = MagicMock()
@@ -193,12 +193,12 @@ async def test_stream_polish_after_stop(app_and_queue):
             })
             assert resp.status_code == 200
 
+            # Session is cleaned up on stop, so polish returns 404
             resp = await client.post("/stream/polish", json={
                 "session_id": session_id,
                 "hf_token": "hf_test",
             })
-            assert resp.status_code == 200
-            assert len(resp.json()["segments"]) == 1
+            assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -368,3 +368,20 @@ async def test_upload_file(app, tmp_path):
             r = await c.post("/upload", files={"file": ("test.wav", fake_audio, "audio/wav")})
     assert r.status_code == 200
     assert "path" in r.json()
+
+
+@pytest.mark.asyncio
+async def test_upload_file_suffix_allowlist(app, tmp_path):
+    """Disallowed extension is replaced with .audio; allowed extensions are kept."""
+    fake_audio = b"\x00" * 64
+    with patch("whisperapp.server._config_dir", return_value=tmp_path):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            # Disallowed extension → .audio
+            r = await c.post("/upload", files={"file": ("evil.exe", fake_audio, "application/octet-stream")})
+            assert r.status_code == 200
+            assert r.json()["path"].endswith(".audio")
+
+            # Allowed extension → preserved
+            r = await c.post("/upload", files={"file": ("clip.mp3", fake_audio, "audio/mpeg")})
+            assert r.status_code == 200
+            assert r.json()["path"].endswith(".mp3")

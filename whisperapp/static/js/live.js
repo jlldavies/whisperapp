@@ -99,14 +99,23 @@ export function initLive(container) {
   // Initial waveform render
   renderWaveform(container.querySelector('#waveform-container'), { height: 64, bars: 120 });
 
-  // Load devices
-  api.getAudioDevices().then(devices => {
-    const sel = container.querySelector('#device-select');
-    sel.innerHTML = devices.length
-      ? devices.map(d => `<option value="${d.index}">${d.name} (${d.sample_rate}Hz)</option>`).join('')
-      : `<option value="">No input devices found</option>`;
-    updateSubTitle(sel.options[sel.selectedIndex]?.text || '');
-  }).catch(() => {});
+  // Load devices using browser's MediaDevices API for correct deviceId strings
+  if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+    navigator.mediaDevices.enumerateDevices()
+      .then(devices => {
+        const audioInputs = devices.filter(d => d.kind === 'audioinput');
+        const sel = container.querySelector('#device-select');
+        sel.innerHTML = audioInputs.length
+          ? audioInputs.map(d => `<option value="${d.deviceId}">${d.label || 'Microphone ' + d.deviceId.slice(0,8)}</option>`).join('')
+          : `<option value="">No input devices found</option>`;
+        updateSubTitle(sel.options[sel.selectedIndex]?.text || '');
+      })
+      .catch(() => {
+        // Fall back to label-only option
+        const sel = container.querySelector('#device-select');
+        sel.innerHTML = `<option value="">Default microphone</option>`;
+      });
+  }
 
   // Format chips
   const liveFmts = new Set(['txt']);
@@ -136,7 +145,7 @@ function updateSubTitle(deviceName) {
 }
 
 async function startRecording(container, formats) {
-  const deviceIndex = parseInt(container.querySelector('#device-select').value || '0');
+  const deviceId = container.querySelector('#device-select').value;
 
   const streamRes = await api.streamStart({ model: 'base' });
   _session = streamRes.session_id;
@@ -174,7 +183,8 @@ async function startRecording(container, formats) {
 
   // Get mic stream
   try {
-    _mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: deviceIndex } });
+    const audioConstraints = deviceId ? { audio: { deviceId: { exact: deviceId } } } : { audio: true };
+    _mediaStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
     _audioCtx = new AudioContext({ sampleRate: 16000 });
     const src = _audioCtx.createMediaStreamSource(_mediaStream);
     _processor = _audioCtx.createScriptProcessor(4096, 1, 1);
