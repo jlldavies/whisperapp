@@ -1,14 +1,17 @@
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, field_validator
 from typing import Optional, List
 import base64
 import uuid
+import shutil
 import numpy as np
 from whisperapp.queue import JobQueue, JobStatus
 from whisperapp.checkpoints import CheckpointManager
 from whisperapp.sanitise import (sanitise_file_path, sanitise_output_path,
                                    sanitise_model, sanitise_job_id)
 from whisperapp.streaming import StreamingEngine
+from whisperapp.ui import list_audio_devices
+from whisperapp.config import _config_dir, Config
 from pathlib import Path
 
 ALLOWED_IPS = {"127.0.0.1", "::1", "testclient"}  # testclient for httpx tests
@@ -372,5 +375,61 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         return {
             "segments": polished.get("segments", []),
         }
+
+    # -----------------------------------------------------------------------
+    # Config endpoints
+    # -----------------------------------------------------------------------
+
+    @app.get("/config")
+    async def get_config():
+        cfg = Config()
+        return {
+            "hf_token": cfg.hf_token,
+            "default_model": cfg.default_model,
+            "default_output_path": cfg.default_output_path,
+            "diarize_by_default": cfg.diarize_by_default,
+            "streaming_model": cfg.streaming_model,
+            "ai_provider": cfg.ai_provider,
+            "ai_api_key": cfg.ai_api_key,
+            "ai_model": cfg.ai_model,
+            "ai_base_url": cfg.ai_base_url,
+        }
+
+    @app.post("/config")
+    async def update_config(req: Request):
+        data = await req.json()
+        cfg = Config()  # noqa: uses module-level Config, patchable via whisperapp.server.Config
+        allowed = {
+            "hf_token", "default_model", "default_output_path",
+            "diarize_by_default", "streaming_model",
+            "ai_provider", "ai_api_key", "ai_model", "ai_base_url",
+        }
+        for k, v in data.items():
+            if k in allowed:
+                setattr(cfg, k, v)
+        cfg.save()
+        return {"success": True}
+
+    # -----------------------------------------------------------------------
+    # Audio devices
+    # -----------------------------------------------------------------------
+
+    @app.get("/audio/devices")
+    async def get_audio_devices():
+        return list_audio_devices()
+
+    # -----------------------------------------------------------------------
+    # File upload — saves to temp dir, returns path for /transcribe
+    # -----------------------------------------------------------------------
+
+    @app.post("/upload")
+    async def upload_file(file: UploadFile):
+        uploads_dir = _config_dir() / "uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        suffix = Path(file.filename).suffix if file.filename else ".audio"
+        tmp_path = uploads_dir / (uuid.uuid4().hex + suffix)
+        with open(tmp_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        return {"path": str(tmp_path)}
 
     return app

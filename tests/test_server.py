@@ -309,3 +309,60 @@ async def test_stream_start_invalid_model(app_and_queue):
     ) as client:
         resp = await client.post("/stream/start", json={"model": "large-v2"})
         assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# New API endpoints: /config, /audio/devices, /upload
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def app(tmp_path):
+    q = JobQueue(db_path=tmp_path / "jobs.db")
+    worker = MagicMock()
+    return create_app(queue=q, worker=worker)
+
+@pytest.mark.asyncio
+async def test_get_config(app, tmp_path):
+    with patch("whisperapp.server.Config") as MockCfg:
+        MockCfg.return_value.hf_token = ""
+        MockCfg.return_value.default_model = "large-v2"
+        MockCfg.return_value.default_output_path = str(tmp_path)
+        MockCfg.return_value.diarize_by_default = True
+        MockCfg.return_value.streaming_model = "base"
+        MockCfg.return_value.ai_provider = "none"
+        MockCfg.return_value.ai_api_key = ""
+        MockCfg.return_value.ai_model = ""
+        MockCfg.return_value.ai_base_url = ""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/config")
+    assert r.status_code == 200
+    data = r.json()
+    assert "default_model" in data
+
+@pytest.mark.asyncio
+async def test_post_config(app, tmp_path):
+    with patch("whisperapp.server.Config") as MockCfg:
+        instance = MagicMock()
+        MockCfg.return_value = instance
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post("/config", json={"default_model": "small"})
+    assert r.status_code == 200
+    assert r.json()["success"] is True
+
+@pytest.mark.asyncio
+async def test_get_audio_devices(app):
+    with patch("whisperapp.server.list_audio_devices", return_value=[
+        {"name": "Built-in Mic", "index": 0, "sample_rate": 44100, "channels": 1}
+    ]):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/audio/devices")
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+
+@pytest.mark.asyncio
+async def test_upload_file(app, tmp_path):
+    fake_audio = b"RIFF" + b"\x00" * 100
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.post("/upload", files={"file": ("test.wav", fake_audio, "audio/wav")})
+    assert r.status_code == 200
+    assert "path" in r.json()

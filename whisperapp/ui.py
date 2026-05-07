@@ -50,6 +50,29 @@ def _list_input_devices():
     return devices
 
 
+def list_audio_devices() -> list[dict]:
+    """Return list of audio input devices. Returns [] if pyaudio unavailable."""
+    try:
+        import pyaudio
+    except ImportError:
+        return []
+    p = pyaudio.PyAudio()
+    devices = []
+    seen = set()
+    for i in range(p.get_device_count()):
+        info = p.get_device_info_by_index(i)
+        if info["maxInputChannels"] > 0 and info["name"] not in seen:
+            seen.add(info["name"])
+            devices.append({
+                "name": info["name"],
+                "index": i,
+                "sample_rate": int(info["defaultSampleRate"]),
+                "channels": int(info["maxInputChannels"]),
+            })
+    p.terminate()
+    return devices
+
+
 def _monitor_all_devices(duration_sec=2.0):
     """Sample every input device and return a markdown table of RMS signal levels."""
     import pyaudio
