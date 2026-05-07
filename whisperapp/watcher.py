@@ -130,17 +130,17 @@ def _running_trigger_apps_mac() -> set[str]:
 
 
 def _running_trigger_apps_psutil() -> set[str]:
-    import psutil
-    result: set[str] = set()
     try:
-        for proc in psutil.process_iter(["name"]):
-            name = (proc.info["name"] or "").lower().replace(".exe", "")
+        import psutil
+        result: set[str] = set()
+        for proc in psutil.process_iter(["name"], ad_value=""):
+            name = proc.info["name"].lower().replace(".exe", "")
             for fragment, display in TRIGGER_APPS.items():
                 if fragment in name:
                     result.add(display)
+        return result
     except Exception:
-        pass
-    return result
+        return set()
 
 
 def _mic_in_use() -> bool:

@@ -31,8 +31,7 @@ def test_running_trigger_apps_returns_set():
 def test_watcher_fires_on_new_app():
     fired = []
     w = MeetingWatcher(on_trigger=lambda s, n: fired.append((s, n)))
-    with patch("whisperapp.watcher._running_trigger_apps", return_value={"Zoom"}), \
-         patch("whisperapp.watcher._mic_in_use", return_value=False):
+    with patch("whisperapp.watcher._running_trigger_apps", return_value={"Zoom"}):
         w._check_apps()
     assert ("app", "Zoom") in fired
 
@@ -40,8 +39,7 @@ def test_watcher_fires_on_new_app():
 def test_watcher_no_duplicate_for_same_app():
     fired = []
     w = MeetingWatcher(on_trigger=lambda s, n: fired.append((s, n)))
-    with patch("whisperapp.watcher._running_trigger_apps", return_value={"Zoom"}), \
-         patch("whisperapp.watcher._mic_in_use", return_value=False):
+    with patch("whisperapp.watcher._running_trigger_apps", return_value={"Zoom"}):
         w._check_apps()
         w._check_apps()   # second call — Zoom still running, should not re-fire
     assert fired.count(("app", "Zoom")) == 1
@@ -50,13 +48,37 @@ def test_watcher_no_duplicate_for_same_app():
 def test_watcher_fires_again_after_app_closes_and_reopens():
     fired = []
     w = MeetingWatcher(on_trigger=lambda s, n: fired.append((s, n)))
-    with patch("whisperapp.watcher._running_trigger_apps", return_value={"Zoom"}), \
-         patch("whisperapp.watcher._mic_in_use", return_value=False):
+    with patch("whisperapp.watcher._running_trigger_apps", return_value={"Zoom"}):
         w._check_apps()
-    with patch("whisperapp.watcher._running_trigger_apps", return_value=set()), \
-         patch("whisperapp.watcher._mic_in_use", return_value=False):
+    with patch("whisperapp.watcher._running_trigger_apps", return_value=set()):
         w._check_apps()   # Zoom closes
-    with patch("whisperapp.watcher._running_trigger_apps", return_value={"Zoom"}), \
-         patch("whisperapp.watcher._mic_in_use", return_value=False):
+    with patch("whisperapp.watcher._running_trigger_apps", return_value={"Zoom"}):
         w._check_apps()   # Zoom opens again
     assert fired.count(("app", "Zoom")) == 2
+
+
+def test_watcher_dismissed_suppresses_new_app():
+    fired = []
+    w = MeetingWatcher(on_trigger=lambda s, n: fired.append((s, n)))
+    w.dismiss()  # dismiss before any app launches
+    with patch("whisperapp.watcher._running_trigger_apps", return_value={"Zoom"}):
+        w._check_apps()
+    assert fired == []  # dismissed — should not fire
+
+
+def test_watcher_dismissed_resets_after_app_closes():
+    fired = []
+    w = MeetingWatcher(on_trigger=lambda s, n: fired.append((s, n)))
+    # App opens and fires
+    with patch("whisperapp.watcher._running_trigger_apps", return_value={"Zoom"}):
+        w._check_apps()
+    assert len(fired) == 1
+    # User dismisses
+    w.dismiss()
+    # App closes — dismissed resets
+    with patch("whisperapp.watcher._running_trigger_apps", return_value=set()):
+        w._check_apps()
+    # App reopens — should fire again (dismiss was reset)
+    with patch("whisperapp.watcher._running_trigger_apps", return_value={"Zoom"}):
+        w._check_apps()
+    assert len(fired) == 2
