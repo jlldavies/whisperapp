@@ -380,10 +380,18 @@ class TestStreamingEngine:
 class TestDeviceAutoDetection:
     @patch("torch.cuda.is_available", return_value=True)
     def test_streaming_engine_auto_selects_cuda(self, mock_cuda):
-        from whisperapp.streaming import StreamingEngine
-        engine = StreamingEngine(device="auto", compute_type="auto")
-        assert engine.device == "cuda"
-        assert engine.compute_type == "float16"
+        import whisperapp.worker as _w
+        orig_dev, orig_ct = _w._WHISPER_DEVICE, _w._COMPUTE_TYPE
+        _w._WHISPER_DEVICE = "cuda"
+        _w._COMPUTE_TYPE = "float16"
+        try:
+            from whisperapp.streaming import StreamingEngine
+            engine = StreamingEngine(device="auto", compute_type="auto")
+            assert engine.device == "cuda"
+            assert engine.compute_type == "float16"
+        finally:
+            _w._WHISPER_DEVICE = orig_dev
+            _w._COMPUTE_TYPE = orig_ct
 
     @patch("torch.cuda.is_available", return_value=False)
     def test_streaming_engine_auto_selects_cpu(self, mock_cuda):
@@ -411,7 +419,15 @@ class TestDeviceAutoDetection:
 
     @patch("torch.cuda.is_available", return_value=True)
     def test_streaming_engine_auto_device_explicit_compute(self, mock_cuda):
-        from whisperapp.streaming import StreamingEngine
-        engine = StreamingEngine(device="auto", compute_type="int8")
-        assert engine.device == "cuda"
-        assert engine.compute_type == "int8"
+        import whisperapp.worker as _w
+        orig_dev, orig_ct = _w._WHISPER_DEVICE, _w._COMPUTE_TYPE
+        _w._WHISPER_DEVICE = "cuda"
+        _w._COMPUTE_TYPE = "float16"
+        try:
+            from whisperapp.streaming import StreamingEngine
+            engine = StreamingEngine(device="auto", compute_type="int8")
+            assert engine.device == "cuda"
+            assert engine.compute_type == "int8"
+        finally:
+            _w._WHISPER_DEVICE = orig_dev
+            _w._COMPUTE_TYPE = orig_ct
