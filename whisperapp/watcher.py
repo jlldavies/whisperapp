@@ -32,6 +32,7 @@ class MeetingWatcher:
         self._active_apps: set[str] = set()   # display names currently running
         self._mic_notified = False             # True while mic notification is active
         self._dismissed = False                # True after user dismisses; resets on condition change
+        self._lock = threading.Lock()
 
     def start(self) -> None:
         self._stop_event.clear()
@@ -44,12 +45,14 @@ class MeetingWatcher:
     def dismiss(self) -> None:
         """Silence notifications for this session of the current trigger.
         Resets automatically when the triggering condition disappears."""
-        self._dismissed = True
+        with self._lock:
+            self._dismissed = True
 
     @property
     def is_active(self) -> bool:
         """True while any meeting trigger is in effect (used to show dismiss menu item)."""
-        return bool(self._active_apps) or self._mic_notified
+        with self._lock:
+            return bool(self._active_apps) or self._mic_notified
 
     @property
     def on_trigger(self):
@@ -74,27 +77,33 @@ class MeetingWatcher:
 
     def _check_apps(self) -> None:
         running = _running_trigger_apps()
-        new_apps = running - self._active_apps
-        gone_apps = self._active_apps - running
-        self._active_apps = running
-        if gone_apps and not running:
-            # All trigger apps closed — reset state so next launch gets a fresh notification
-            self._mic_notified = False
-            self._dismissed = False
-        for name in new_apps:
-            if not self._dismissed:
-                self._on_trigger("app", name)
+        with self._lock:
+            new_apps = running - self._active_apps
+            gone_apps = self._active_apps - running
+            self._active_apps = running
+            if gone_apps and not running:
+                # All trigger apps closed — reset state so next launch gets a fresh notification
+                self._mic_notified = False
+                self._dismissed = False
+            notify = [(name,) for name in new_apps if not self._dismissed]
+        for (name,) in notify:
+            self._on_trigger("app", name)
 
     def _check_mic(self) -> None:
         in_use = _mic_in_use()
-        if in_use and not self._mic_notified:
-            self._mic_notified = True
-            if not self._dismissed:
-                self._on_trigger("mic", "")
-        elif not in_use and self._mic_notified:
-            # Mic released — reset so next activation triggers again
-            self._mic_notified = False
-            self._dismissed = False
+        with self._lock:
+            if in_use and not self._mic_notified:
+                self._mic_notified = True
+                should_notify = not self._dismissed
+            elif not in_use and self._mic_notified:
+                # Mic released — reset so next activation triggers again
+                self._mic_notified = False
+                self._dismissed = False
+                should_notify = False
+            else:
+                should_notify = False
+        if should_notify:
+            self._on_trigger("mic", "")
 
 
 def _running_trigger_apps() -> set[str]:
