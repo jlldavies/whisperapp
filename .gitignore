@@ -32,9 +32,27 @@ desktop.ini
 # WhisperApp runtime
 *.db
 .whisperapp_partials/
-_launcher.log
-_launcher.err
+*.log
+*.err
+*.tmp
 *.tmp.*
+worker.py.tmp.*
+
+# Claude Code machine-local settings
+.claude/settings.local.json
+
+# whisper_webui outputs and downloaded models
+whisper_webui/outputs/
+whisper_webui/models/
+
+# ML model weights
+*.pt
+*.pth
+*.bin
+*.onnx
+*.safetensors
+*.gguf
+*.mlpackage
 
 # Build artefacts — rebuilt per platform, never committed
 dist/
