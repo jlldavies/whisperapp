@@ -31,3 +31,11 @@ async def test_ui_serves_js(app):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         r = await c.get("/js/app.js")
     assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_ui_js_content_type(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.get("/js/marks.js")
+    assert r.status_code == 200
+    assert "javascript" in r.headers.get("content-type", "")
