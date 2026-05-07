@@ -126,3 +126,18 @@ def test_mic_in_use_mac_returns_false_on_import_error():
     with patch.dict("sys.modules", {"AVFoundation": None}):
         result = _mic_in_use_mac()
     assert result is False
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
+def test_mic_in_use_mac_returns_false_when_devices_is_none():
+    from whisperapp.watcher import _mic_in_use_mac
+    with patch.dict("sys.modules", {
+        "AVFoundation": MagicMock(
+            AVCaptureDevice=MagicMock(
+                devicesWithMediaType_=MagicMock(return_value=None)
+            ),
+            AVMediaTypeAudio="soun"
+        )
+    }):
+        result = _mic_in_use_mac()
+    assert result is False
