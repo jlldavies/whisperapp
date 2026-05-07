@@ -176,3 +176,82 @@ def test_mic_key_active_false_when_stop_after_start():
     ]):
         result = _mic_key_active(mock_key)
     assert result is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_mic_key_active_false_when_start_is_zero():
+    from whisperapp.watcher import _mic_key_active
+    import winreg
+    mock_key = MagicMock()
+    with patch("winreg.QueryValueEx", return_value=(0, winreg.REG_QWORD)):
+        result = _mic_key_active(mock_key)
+    assert result is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_mic_key_active_true_when_no_stop_key():
+    from whisperapp.watcher import _mic_key_active
+    import winreg
+    mock_key = MagicMock()
+    # QueryValueEx: first call (LastUsedTimeStart) returns 100, second call (LastUsedTimeStop) raises OSError
+    with patch("winreg.QueryValueEx", side_effect=[
+        (100, winreg.REG_QWORD),   # LastUsedTimeStart = 100
+        OSError("not found"),       # LastUsedTimeStop absent → still active
+    ]):
+        result = _mic_key_active(mock_key)
+    assert result is True
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_mic_in_use_win_true_via_packaged_app():
+    """Packaged Store app (non-NonPackaged) with active mic."""
+    from whisperapp.watcher import _mic_in_use_win
+    import winreg
+
+    mock_root_ctx = MagicMock()
+    mock_app_ctx = MagicMock()
+
+    def open_key(hive, path, *a, **kw):
+        cm = MagicMock()
+        cm.__enter__ = MagicMock(return_value=mock_root_ctx if path.endswith("microphone") else mock_app_ctx)
+        cm.__exit__ = MagicMock(return_value=False)
+        return cm
+
+    with patch("winreg.OpenKey", side_effect=open_key), \
+         patch("winreg.EnumKey", side_effect=["SomeStoreApp", OSError()]), \
+         patch("winreg.QueryValueEx", side_effect=[
+             (100, winreg.REG_QWORD),  # LastUsedTimeStart = 100
+             (0,   winreg.REG_QWORD),  # LastUsedTimeStop  = 0 → active
+         ]):
+        result = _mic_in_use_win()
+    assert result is True
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_mic_in_use_win_true_via_nonpackaged_app():
+    """NonPackaged exe (e.g. Chrome, Zoom.exe) with active mic."""
+    from whisperapp.watcher import _mic_in_use_win
+    import winreg
+
+    # EnumKey calls: first level returns "NonPackaged", then OSError to stop.
+    # Second level (inside NonPackaged) returns "chrome.exe", then OSError to stop.
+    enum_key_calls = iter(["NonPackaged", OSError(), "chrome.exe", OSError()])
+
+    def enum_key_side(key, idx):
+        val = next(enum_key_calls)
+        if isinstance(val, Exception):
+            raise val
+        return val
+
+    mock_ctx = MagicMock()
+    mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
+    mock_ctx.__exit__ = MagicMock(return_value=False)
+
+    with patch("winreg.OpenKey", return_value=mock_ctx), \
+         patch("winreg.EnumKey", side_effect=enum_key_side), \
+         patch("winreg.QueryValueEx", side_effect=[
+             (100, winreg.REG_QWORD),  # LastUsedTimeStart = 100
+             (0,   winreg.REG_QWORD),  # LastUsedTimeStop  = 0 → active
+         ]):
+        result = _mic_in_use_win()
+    assert result is True
