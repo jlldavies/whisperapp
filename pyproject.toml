@@ -10,8 +10,15 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = [
+    # Core transcription — works on all platforms (CPU + CUDA on Windows/Linux,
+    # CPU with int8 on Mac, MPS for diarization on Apple Silicon)
     "whisperx",
     "pyannote.audio",
+    # Apple Silicon fast path — only installs on arm64 macOS.
+    # Uses Apple MLX framework (Neural Engine + GPU) for Whisper inference.
+    # pip/uv skips this automatically on Windows, Linux, and Intel Mac.
+    "mlx-whisper; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # UI and API
     "gradio>=4.0",
     "fastapi",
     "uvicorn[standard]",
@@ -29,9 +36,6 @@ dependencies = [
 claude = ["anthropic>=0.25"]
 openai = ["openai>=1.0"]
 # Ollama uses requests (already a core dependency) — no extra package needed
-# Apple Silicon GPU acceleration for Whisper transcription
-# Requires Apple Silicon Mac (M1/M2/M3/M4). Not needed on Intel Mac or Windows/Linux.
-mac-gpu = ["mlx-whisper"]
 # Convenience bundles
 ai-all = ["anthropic>=0.25", "openai>=1.0"]
 dev = ["pytest", "pytest-asyncio"]
