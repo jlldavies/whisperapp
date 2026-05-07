@@ -29,6 +29,7 @@ dependencies = [
     "click",
     "requests",
     "pyaudio",
+    "soundfile",
 ]
 
 [project.optional-dependencies]

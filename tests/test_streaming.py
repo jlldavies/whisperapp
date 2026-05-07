@@ -290,8 +290,10 @@ class TestStreamingEngine:
         engine = StreamingEngine(device="cpu", compute_type="float32")
         engine._all_audio = [np.zeros(16000, dtype=np.float32)]
 
-        with patch("whisperx.diarize.DiarizationPipeline") as mock_dp, \
-             patch("soundfile.write"):
+        import sys
+        mock_sf = MagicMock()
+        with patch.dict(sys.modules, {"soundfile": mock_sf}), \
+             patch("whisperx.diarize.DiarizationPipeline") as mock_dp:
             mock_dp.return_value = MagicMock(return_value=MagicMock())
             result = engine.polish(hf_token="hf_test_token")
 
@@ -303,8 +305,8 @@ class TestStreamingEngine:
             progress_log.append((stage, detail))
 
         engine._all_audio = [np.zeros(16000, dtype=np.float32)]
-        with patch("whisperx.diarize.DiarizationPipeline") as mock_dp, \
-             patch("soundfile.write"):
+        with patch.dict(sys.modules, {"soundfile": mock_sf}), \
+             patch("whisperx.diarize.DiarizationPipeline") as mock_dp:
             mock_dp.return_value = MagicMock(return_value=MagicMock())
             engine.polish(hf_token="hf_test_token", on_progress=on_progress)
 
@@ -385,11 +387,21 @@ class TestDeviceAutoDetection:
 
     @patch("torch.cuda.is_available", return_value=False)
     def test_streaming_engine_auto_selects_cpu(self, mock_cuda):
-        from whisperapp.streaming import StreamingEngine
-        engine = StreamingEngine(device="auto", compute_type="auto")
-        assert engine.device == "cpu"
-        # CPU auto-detection now uses int8 (faster than float32 on modern CPUs)
-        assert engine.compute_type == "int8"
+        # worker._WHISPER_DEVICE/_COMPUTE_TYPE are set at module import time, so
+        # mocking torch.cuda.is_available alone isn't enough when the module is
+        # already cached.  Patch the attributes directly instead.
+        import whisperapp.worker as _w
+        orig_dev, orig_ct = _w._WHISPER_DEVICE, _w._COMPUTE_TYPE
+        _w._WHISPER_DEVICE = "cpu"
+        _w._COMPUTE_TYPE = "int8"
+        try:
+            from whisperapp.streaming import StreamingEngine
+            engine = StreamingEngine(device="auto", compute_type="auto")
+            assert engine.device == "cpu"
+            assert engine.compute_type == "int8"
+        finally:
+            _w._WHISPER_DEVICE = orig_dev
+            _w._COMPUTE_TYPE = orig_ct
 
     def test_streaming_engine_explicit_device_respected(self):
         from whisperapp.streaming import StreamingEngine

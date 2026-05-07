@@ -10,6 +10,7 @@ Pillow
 bleach
 httpx
 pyaudio
+soundfile
 click
 requests
 pytest
