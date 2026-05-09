@@ -105,25 +105,37 @@ def write_formats(result: dict, source_file: str,
             pass
 
     # Formats that show human-readable text — pause markers are inserted here
-    HUMAN_FORMATS = {"txt", "srt", "vtt"}
+    HUMAN_FORMATS = {"txt", "srt", "vtt", "docx", "pdf"}
 
     marked_result = None  # lazily computed
 
     for fmt in formats:
+        out_file = out_dir / f"{stem}.{fmt}"
+
+        if fmt in ("docx", "pdf"):
+            # Use marked result (with pause markers) for rich formats too
+            if marked_result is None and config is not None:
+                from whisperapp.pauses import insert_pause_markers
+                marked_result = insert_pause_markers(result, config)
+                if "source_metadata" not in marked_result and "source_metadata" in result:
+                    marked_result["source_metadata"] = result["source_metadata"]
+            rich = marked_result if marked_result is not None else result
+            from whisperapp.document_formats import write_docx, write_pdf
+            if fmt == "docx":
+                write_docx(rich, source_file, out_file, config)
+            else:
+                write_pdf(rich, source_file, out_file, config)
+            continue
+
         if fmt not in FORMATTERS:
             continue
         if config is not None and fmt in HUMAN_FORMATS:
             if marked_result is None:
                 from whisperapp.pauses import insert_pause_markers
                 marked_result = insert_pause_markers(result, config)
-                # Carry the metadata through the marked copy too — pauses
-                # module returns a fresh dict.
                 if "source_metadata" not in marked_result and "source_metadata" in result:
                     marked_result["source_metadata"] = result["source_metadata"]
-                # Acoustic markers are inserted by analyse_acoustics during the worker
-                # pipeline and stored in the result; nothing extra needed here.
-                # Emotion markers likewise.
             content = FORMATTERS[fmt](marked_result)
         else:
             content = FORMATTERS[fmt](result)
-        (out_dir / f"{stem}.{fmt}").write_text(content, encoding="utf-8")
+        out_file.write_text(content, encoding="utf-8")

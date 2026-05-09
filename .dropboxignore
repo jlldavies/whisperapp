@@ -8,6 +8,9 @@
 # Format is git-style globs (Dropbox honours these on the .dropboxignore that
 # sits in the synced folder). Patterns ending in `/` match directories.
 
+# ── Git internals — no need to sync, each machine has its own clone ─────────
+.git/
+
 # ── Virtual environments ─────────────────────────────────────────────────────
 .venv/
 venv/

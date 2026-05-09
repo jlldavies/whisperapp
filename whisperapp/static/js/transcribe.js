@@ -2,7 +2,7 @@ import { api } from './api.js';
 import { NAV_ICONS } from './marks.js';
 
 const MODELS = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3'];
-const FORMATS = ['txt', 'srt', 'vtt', 'json', 'tsv'];
+const FORMATS = ['txt', 'srt', 'vtt', 'json', 'tsv', 'docx', 'pdf'];
 let _pollTimer = null;
 
 export function initTranscribe(container) {

@@ -1,18 +1,32 @@
 # WhisperApp
 
-**Local, private transcription for people who deal with a lot of audio.** Drop a folder of recordings, a day's worth of meetings, or hours of interview audio — WhisperApp queues them, processes them in the background, and gives you clean transcripts with speaker names, timestamps, and optional AI annotations. Nothing leaves your machine.
+**Local, private transcription for people who deal with a lot of audio.** Drop a folder of recordings, a day's worth of meetings, or hours of interview audio — WhisperApp queues them, processes them in the background, and gives you richly annotated transcripts with speaker names, silence markers, acoustic cues, and optional emotion analysis. Nothing leaves your machine.
 
-Built on [WhisperX](https://github.com/m-bain/whisperX). Runs as a background app on macOS and Windows with a web UI, full REST API, CLI, and system tray icon. Mix and match — use the UI for review, the CLI for automation, the API for integrations.
+Built on [WhisperX](https://github.com/m-bain/whisperX). Runs as a persistent background app on macOS and Windows with a web UI, full REST API, CLI, and system tray icon.
+
+---
+
+## What makes it different
+
+Most Whisper tools give you text. WhisperApp gives you **analysis-ready transcripts** — every output format carries the same enriched content:
+
+- **Silence markers** tell you exactly where thinking pauses, long pauses, and conversational gaps occur — labelled by duration, inline with the text
+- **Acoustic annotations** flag per-segment speaking characteristics: volume shifts, raised voice, animated delivery, rapid or slow speech
+- **Emotion labels** from multiple speech emotion recognition models, combined and confidence-weighted
+- **Speaker-labelled output** from an interactive review UI — listen to snippets, assign real names, then save; all formats get `[Name]:` prefixes
+- **Rich document output** — DOCX and PDF using your own branded template, with `{{field}}` markers for filename, date, speakers, meeting notes, and more
+- **Production-grade batch queue** — SQLite-backed with job reordering, crash recovery, and worker pause/resume; not just a UI wrapper around a CLI tool
+- **Full automation surface** — REST API, CLI, and MCP-compatible; trigger from scripts, wire into pipelines, integrate with other tools
 
 ---
 
 ## What it's good for
 
-- **Batch transcription** — queue dozens of files, walk away. SQLite-backed job queue with checkpoint recovery so crashes don't lose progress.
-- **Meeting capture** — live microphone recording with real-time transcript, speaker detection, and automatic output to your format of choice.
-- **Research and interviews** — speaker diarization identifies who said what; label speakers by name before saving. Output goes to TXT, SRT, VTT, JSON, or TSV.
-- **AI-augmented review** — connect Claude, OpenAI, or local Ollama to get automatic speaker identification, meeting notes, and emotion analysis alongside the raw transcript.
-- **Automation** — full REST API and CLI mean you can trigger transcription from scripts, integrate with other tools, or wire it into an MCP workflow.
+- **Batch transcription** — queue dozens of files, walk away. Jobs resume from the last checkpoint if the app crashes.
+- **Meeting capture** — live microphone recording with real-time transcript, speaker detection, and automatic save to any format including DOCX.
+- **Research and interviews** — acoustic + emotion analysis turn a transcript into a behavioural record; speaker review names each voice before output is written.
+- **Office workflows** — DOCX and PDF outputs accept a custom template (your letterhead, your field layout); transcripts land directly in your document format.
+- **Automation** — REST API and CLI let you trigger transcription from scripts, poll job status, and retrieve transcripts programmatically. MCP-compatible for agentic workflows.
 
 ---
 
@@ -38,7 +52,7 @@ Built on [WhisperX](https://github.com/m-bain/whisperX). Runs as a background ap
 - **10+ Whisper model sizes** — `tiny` through `large-v3` and `turbo`; Apple Silicon auto-uses MLX for fast on-device inference
 - **Queue with priority control** — reorder jobs, delete items, pause and resume the worker to reclaim CPU
 - **Checkpoint recovery** — each job saves progress through stages; a crash picks back up where it left off
-- **Formats** — TXT, SRT, VTT, JSON, TSV — all generated simultaneously from the same aligned data
+- **Output formats** — TXT, SRT, VTT, JSON, TSV, DOCX, PDF — all generated simultaneously from the same aligned data
 
 ### Speaker diarization
 - **pyannote.audio** — identifies each speaker's turns throughout the recording
@@ -80,6 +94,23 @@ Injected inline so every output format gets the same enriched content:
 | audeering dimensional | Continuous arousal + valence |
 
 Run multiple models: unanimous → label kept, split → highest confidence wins.
+
+### Document output with templates
+DOCX and PDF outputs use a template file with `{{field}}` markers — drop your letterhead and structure in, WhisperApp fills in the content:
+
+| Marker | Value |
+|--------|-------|
+| `{{filename}}` | Source file name |
+| `{{datetime}}` | Transcription date and time |
+| `{{duration}}` | Audio length |
+| `{{speakers}}` | Comma-separated speaker names |
+| `{{transcript}}` | Plain transcript text |
+| `{{diarized_transcript}}` | Transcript with `[Speaker]:` prefixes |
+| `{{segments}}` | Timestamped segments, one per line |
+| `{{meeting_notes}}` | AI meeting notes (blank if not run) |
+| `{{word_count}}` | Total word count |
+
+Download the editable default templates from **Settings → Storage → Output templates**, customise them in Word or any HTML editor, then point the path back in Settings. The built-in default produces a clean, print-ready document without any configuration.
 
 ### AI integration
 Connect an LLM to unlock AI-assisted review (no AI required for core transcription):
@@ -246,6 +277,8 @@ All settings live at `~/.whisperapp/config.json` — editable via the Settings U
 | `emotion_model_ids` | `[]` | Which SER model IDs to run |
 | `emotion_confidence_threshold` | `0.65` | Min confidence to include label |
 | `emotion_combine_with_ai` | `false` | AI synthesis of model outputs |
+| `output_template_docx` | `""` | Path to custom `.docx` template (blank = built-in default) |
+| `output_template_pdf` | `""` | Path to custom `.html` template for PDF (blank = built-in default) |
 
 ---
 

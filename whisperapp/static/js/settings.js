@@ -230,6 +230,68 @@ function renderStorage(body, cfg) {
           <span class="mono" style="font-size:11px;color:var(--ink-4)" id="clear-jobs-result"></span>
         </div>
       </div>
+    </section>
+
+    <section class="settings-section">
+      <header class="settings-section-head">
+        <h2>Output templates</h2>
+        <span class="wa-card-sub mono">DOCX &amp; PDF</span>
+      </header>
+      <p style="font-size:12.5px;color:var(--ink-3);line-height:1.6;margin-bottom:12px">
+        DOCX and PDF outputs use a template file with
+        <span class="mono" style="background:var(--paper-2);padding:1px 5px;border-radius:3px">{{field_name}}</span>
+        markers. Leave blank to use the built-in default. Download the defaults below,
+        edit them, then point the path here to use your version.
+      </p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div>
+          <span class="wa-label">DOCX template path</span>
+          <input class="wa-input" data-cfg="output_template_docx"
+            placeholder="~/.whisperapp/templates/custom.docx"
+            value="${escHtml(cfg.output_template_docx||'')}">
+          <div style="font-size:11px;color:var(--ink-4);margin-top:4px">
+            Leave blank to use the built-in default layout
+          </div>
+        </div>
+        <div>
+          <span class="wa-label">PDF template path</span>
+          <input class="wa-input" data-cfg="output_template_pdf"
+            placeholder="~/.whisperapp/templates/custom.html"
+            value="${escHtml(cfg.output_template_pdf||'')}">
+          <div style="font-size:11px;color:var(--ink-4);margin-top:4px">
+            HTML file — use CSS @page for print margins
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <a class="wa-btn" href="http://127.0.0.1:7861/templates/download-docx"
+           download="whisperapp_template.docx">Download DOCX template</a>
+        <a class="wa-btn" href="http://127.0.0.1:7861/templates/download-html"
+           download="whisperapp_pdf_template.html">Download HTML template</a>
+      </div>
+      <div style="margin-top:16px">
+        <span class="wa-label" style="display:block;margin-bottom:8px">Available markers</span>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px 12px;font-size:11px">
+          ${[
+            ['{{filename}}','Source file name'],
+            ['{{datetime}}','Date and time'],
+            ['{{duration}}','Audio duration'],
+            ['{{speakers}}','Speaker names'],
+            ['{{word_count}}','Word count'],
+            ['{{model}}','Whisper model'],
+            ['{{transcript}}','Plain transcript'],
+            ['{{diarized_transcript}}','With speaker labels'],
+            ['{{segments}}','Timestamped segments'],
+            ['{{meeting_notes}}','AI meeting notes'],
+            ['{{language}}','Detected language'],
+            ['{{filepath}}','Full source path'],
+          ].map(([marker, desc]) => `
+            <div style="display:flex;flex-direction:column;gap:2px;padding:4px 0">
+              <span class="mono" style="font-size:10.5px;color:var(--accent)">${marker}</span>
+              <span style="color:var(--ink-3)">${desc}</span>
+            </div>`).join('')}
+        </div>
+      </div>
     </section>`;
 
   wireInputs(body, cfg);

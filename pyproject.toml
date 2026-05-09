@@ -35,6 +35,10 @@ dependencies = [
     # Pure DSP — no AI provider needed. The settings panel's master toggle is a
     # no-op without this.
     "librosa",
+    # DOCX and PDF output formats with template support.
+    # python-docx generates Word documents; weasyprint converts HTML→PDF.
+    "python-docx",
+    "weasyprint",
     "pyobjc-framework-AVFoundation; sys_platform == 'darwin'",
     # Windows: route SSL through the Windows certificate store so corporate
     # proxies / AV TLS inspectors (Norton, ZScaler, etc.) work without manual

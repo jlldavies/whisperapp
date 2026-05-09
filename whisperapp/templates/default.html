@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{filename}} — Transcript</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Georgia', serif;
+      font-size: 11pt;
+      color: #1a1a1a;
+      background: #fff;
+      padding: 20mm 22mm;
+      max-width: 210mm;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 18pt;
+      font-weight: bold;
+      border-bottom: 2px solid #1a1a1a;
+      padding-bottom: 8px;
+      margin-bottom: 16px;
+      word-break: break-all;
+    }
+
+    h2 {
+      font-size: 12pt;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #555;
+      margin: 28px 0 10px;
+    }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: 130px 1fr;
+      gap: 4px 12px;
+      background: #f7f7f7;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 12px 16px;
+      font-size: 9.5pt;
+    }
+
+    .meta-label { font-weight: bold; color: #444; }
+    .meta-value { color: #222; }
+
+    .notes-box {
+      background: #fffbef;
+      border-left: 4px solid #d4a800;
+      padding: 12px 16px;
+      font-size: 10pt;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    .transcript-line {
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      gap: 8px;
+      padding: 4px 0;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 10.5pt;
+      line-height: 1.55;
+    }
+
+    .transcript-ts {
+      font-family: 'Courier New', monospace;
+      font-size: 9pt;
+      color: #888;
+      padding-top: 2px;
+    }
+
+    .transcript-speaker {
+      font-weight: bold;
+    }
+
+    .pause-marker {
+      color: #999;
+      font-style: italic;
+      font-size: 9pt;
+      padding: 2px 0;
+      border-bottom: none;
+    }
+
+    .footer {
+      margin-top: 32px;
+      padding-top: 8px;
+      border-top: 1px solid #ddd;
+      font-size: 8.5pt;
+      color: #aaa;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    @media print {
+      body { padding: 0; }
+      .transcript-line { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>{{filename}}</h1>
+
+  <div class="meta-grid">
+    <span class="meta-label">Date</span>      <span class="meta-value">{{datetime}}</span>
+    <span class="meta-label">Duration</span>  <span class="meta-value">{{duration}}</span>
+    <span class="meta-label">Speakers</span>  <span class="meta-value">{{speakers}}</span>
+    <span class="meta-label">Words</span>     <span class="meta-value">{{word_count}}</span>
+    <span class="meta-label">Model</span>     <span class="meta-value">{{model}}</span>
+    <span class="meta-label">Language</span>  <span class="meta-value">{{language}}</span>
+  </div>
+
+  {{meeting_notes_block}}
+
+  <h2>Transcript</h2>
+  {{transcript_block}}
+
+  <div class="footer">
+    <span>{{filepath}}</span>
+    <span>WhisperApp</span>
+  </div>
+
+</body>
+</html>

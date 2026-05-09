@@ -621,6 +621,35 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
             return {"success": False, "error": str(e)}
         return {"success": True, "path": path}
 
+    @app.get("/templates/download-docx")
+    async def download_docx_template():
+        """Generate and return the editable DOCX template for download."""
+        from fastapi.responses import FileResponse
+        import tempfile
+        from whisperapp.document_formats import generate_docx_template
+        tmp = Path(tempfile.mktemp(suffix=".docx"))
+        ok = generate_docx_template(tmp)
+        if not ok:
+            from fastapi import HTTPException
+            raise HTTPException(503, "python-docx not installed")
+        return FileResponse(
+            str(tmp),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename="whisperapp_template.docx",
+        )
+
+    @app.get("/templates/download-html")
+    async def download_html_template():
+        """Return the default HTML template for PDF output."""
+        from fastapi.responses import FileResponse
+        from whisperapp.document_formats import _PKG_TEMPLATES
+        html_path = _PKG_TEMPLATES / "default.html"
+        if not html_path.exists():
+            from fastapi import HTTPException
+            raise HTTPException(404, "Template not found")
+        return FileResponse(str(html_path), media_type="text/html",
+                            filename="whisperapp_pdf_template.html")
+
     # ── Startup registration (launch on login) ──────────────────────────────
 
     @app.get("/startup/status")

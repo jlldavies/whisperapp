@@ -44,6 +44,9 @@ class Config:
     emotion_model_ids: list = field(default_factory=list)
     emotion_confidence_threshold: float = 0.65
     emotion_combine_with_ai: bool = False
+    # Output templates — blank = use bundled default
+    output_template_docx: str = ""   # path to a .docx template file
+    output_template_pdf: str = ""    # path to an .html template file
 
     def __post_init__(self):
         if not self.default_output_path:

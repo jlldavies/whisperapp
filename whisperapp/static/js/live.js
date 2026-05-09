@@ -77,7 +77,7 @@ export function initLive(container) {
             <div style="margin-top:16px">
               <span class="wa-label">Save formats</span>
               <div style="display:flex;gap:6px;flex-wrap:wrap" id="live-formats">
-                ${['txt','srt','vtt','json','tsv'].map((f,i)=>`<span class="wa-chip${i===0?' on':''}" data-fmt="${f}">${f}</span>`).join('')}
+                ${['txt','srt','vtt','json','tsv','docx','pdf'].map((f,i)=>`<span class="wa-chip${i===0?' on':''}" data-fmt="${f}">${f}</span>`).join('')}
               </div>
             </div>
           </div>
