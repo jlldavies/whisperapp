@@ -81,8 +81,10 @@ STAGES = {
     "transcribing":   {"label": "2/5 Transcribing",        "start":  8, "end": 40},
     "aligning":       {"label": "3/5 Aligning words",      "start": 40, "end": 60},
     "diarizing":      {"label": "4/5 Identifying speakers", "start": 60, "end": 85},
-    "speaker_review": {"label": "5/5 Speaker review",      "start": 85, "end": 90},
-    "saving":         {"label": "5/5 Saving files",        "start": 90, "end": 100},
+    "speaker_review": {"label": "5/5 Speaker review",      "start": 85, "end": 88},
+    "acoustics":      {"label": "5/5 Acoustic analysis",   "start": 88, "end": 90},
+    "emotions":       {"label": "5/5 Emotion analysis",    "start": 90, "end": 95},
+    "saving":         {"label": "5/5 Saving files",        "start": 95, "end": 100},
 }
 
 
@@ -327,6 +329,7 @@ class Worker:
         self.hf_token = hf_token
         self._thread = None
         self._stop_event = threading.Event()
+        self._paused = False
 
     def start(self):
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -335,13 +338,27 @@ class Worker:
     def stop(self):
         self._stop_event.set()
 
+    def pause(self):
+        self._paused = True
+
+    def resume(self):
+        self._paused = False
+
+    @property
+    def is_paused(self) -> bool:
+        return self._paused
+
     def _loop(self):
         while not self._stop_event.is_set():
-            job = self.queue.next_queued()
-            if job:
-                self.process_job(job["id"])
-            else:
-                time.sleep(2)
+            if not self._paused:
+                job = self.queue.next_queued()
+                if job:
+                    try:
+                        self.process_job(job["id"])
+                    except Exception:
+                        pass  # job already marked failed; continue loop
+                    continue
+            time.sleep(2)
 
     def process_job(self, job_id: str):
         job = self.queue.get_job(job_id)
@@ -486,7 +503,34 @@ class Worker:
             if self.queue.get_job(job_id)["status"] == JobStatus.CANCELLED:
                 return
 
-            # --- Stage 5: Speaker review or save ---
+            # --- Stage 5a: Acoustic analysis (fast, no model needed) ---
+            from whisperapp.config import Config as _Config
+            cfg = _Config()
+            if cfg.acoustic_enabled:
+                hb.update("acoustics")
+                try:
+                    from whisperapp.acoustic import analyse_acoustics
+                    final_result = analyse_acoustics(job["file_path"], final_result, cfg)
+                except Exception as _e:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "Acoustic analysis failed: %s", _e)
+
+            # --- Stage 5b: Emotion analysis (slow, only if models downloaded) ---
+            if cfg.emotion_enabled and cfg.emotion_model_ids:
+                hb.update("emotions")
+                try:
+                    from whisperapp.emotion import analyse_emotions
+                    from whisperapp.emotion_registry import ModelManager
+                    _emotion_manager = ModelManager()
+                    final_result = analyse_emotions(
+                        job["file_path"], final_result, cfg, _emotion_manager)
+                except Exception as _e:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "Emotion analysis failed: %s", _e)
+
+            # --- Stage 5c: Speaker review or save ---
             if job["diarize"]:
                 cm.save("speaker_review", final_result)
                 hb.update("speaker_review")
@@ -517,8 +561,33 @@ class Worker:
         try:
             job = self.queue.get_job(job_id)
             cm = CheckpointManager(job["output_path"], job_id)
-            cm.save("saving", renamed_segments)
-            self._write_outputs(job, renamed_segments, cm)
+            final_result = renamed_segments
+
+            # Apply acoustic and emotion analysis before writing outputs
+            from whisperapp.config import Config as _Config
+            cfg = _Config()
+            if cfg.acoustic_enabled:
+                try:
+                    from whisperapp.acoustic import analyse_acoustics
+                    final_result = analyse_acoustics(job["file_path"], final_result, cfg)
+                except Exception as _e:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "Acoustic analysis failed in complete_with_result: %s", _e)
+            if cfg.emotion_enabled and cfg.emotion_model_ids:
+                try:
+                    from whisperapp.emotion import analyse_emotions
+                    from whisperapp.emotion_registry import ModelManager
+                    _emotion_manager = ModelManager()
+                    final_result = analyse_emotions(
+                        job["file_path"], final_result, cfg, _emotion_manager)
+                except Exception as _e:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "Emotion analysis failed in complete_with_result: %s", _e)
+
+            cm.save("saving", final_result)
+            self._write_outputs(job, final_result, cm)
             self.queue.complete_job(job_id, job["output_path"])
             cm.cleanup()
         finally:
@@ -526,7 +595,9 @@ class Worker:
 
     def _write_outputs(self, job, result, cm: CheckpointManager):
         from whisperapp.formatters import write_formats
+        from whisperapp.config import Config
         self.queue.update_progress(
             job["id"], STAGES["saving"]["start"],
             STAGES["saving"]["label"])
-        write_formats(result, job["file_path"], job["output_path"], job["formats"])
+        cfg = Config()
+        write_formats(result, job["file_path"], job["output_path"], job["formats"], cfg)

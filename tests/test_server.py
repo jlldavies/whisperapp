@@ -385,3 +385,110 @@ async def test_upload_file_suffix_allowlist(app, tmp_path):
             r = await c.post("/upload", files={"file": ("clip.mp3", fake_audio, "audio/mpeg")})
             assert r.status_code == 200
             assert r.json()["path"].endswith(".mp3")
+
+
+# ---------------------------------------------------------------------------
+# New model catalogue endpoints
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_models_catalogue(app, tmp_path):
+    """GET /models/catalogue returns all 5 categories."""
+    with patch("whisperapp.model_registry.ModelRegistry.list_catalogue") as mock_catalogue:
+        mock_catalogue.return_value = {
+            "transcription": {"title": "Transcription", "sub": "...", "models": []},
+            "streaming":     {"title": "Streaming",     "sub": "...", "models": []},
+            "alignment":     {"title": "Alignment",     "sub": "...", "models": []},
+            "diarization":   {"title": "Diarization",   "sub": "...", "models": []},
+            "emotion":       {"title": "Emotion",       "sub": "...", "models": []},
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/models/catalogue")
+    assert r.status_code == 200
+    data = r.json()
+    assert "transcription" in data
+    assert "emotion" in data
+
+
+@pytest.mark.asyncio
+async def test_get_disk_summary(app, tmp_path):
+    """GET /models/disk-summary returns per-category usage."""
+    with patch("whisperapp.model_registry.ModelRegistry.get_disk_summary") as mock_summary:
+        mock_summary.return_value = {
+            "transcription": {"bytes": 1572864000, "count": 1, "label": "Transcription"},
+            "streaming":     {"bytes": 77594624,   "count": 1, "label": "Streaming"},
+            "alignment":     {"bytes": 377487360,  "count": 1, "label": "Alignment"},
+            "diarization":   {"bytes": 28311552,   "count": 1, "label": "Diarization"},
+            "emotion":       {"bytes": 314572800,  "count": 1, "label": "Emotion"},
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/models/disk-summary")
+    assert r.status_code == 200
+    data = r.json()
+    assert "transcription" in data
+    for cat_key, info in data.items():
+        assert "bytes" in info
+        assert "count" in info
+        assert "label" in info
+
+
+@pytest.mark.asyncio
+async def test_post_storage_reveal(app, tmp_path):
+    """POST /storage/reveal calls subprocess to open path."""
+    import sys
+    with patch("subprocess.Popen") as mock_popen:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post("/storage/reveal")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["success"] is True
+    assert ".whisperapp" in data["path"]
+    # subprocess.Popen should have been called once
+    mock_popen.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_post_check_updates(app):
+    """POST /models/check-updates clears caches and returns the new shape
+    (includes per-capability latest-version lookups)."""
+    with patch("whisperapp.model_registry.ModelRegistry.force_check_updates") as mock_force:
+        mock_force.return_value = {"checked": True, "capabilities": [{"id": "librosa", "latest": "0.11.0"}]}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post("/models/check-updates")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["checked"] is True
+    assert "capabilities" in data
+    mock_force.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_activate_model_unknown(app):
+    """POST /models/{id}/activate with unknown id returns 404."""
+    with patch("whisperapp.model_registry.ModelRegistry.activate_model") as mock_act:
+        mock_act.return_value = {"success": False, "error": "Model not found: bad-id"}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post("/models/bad-id/activate")
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_deactivate_model(app):
+    """POST /models/{id}/deactivate returns success for known model."""
+    with patch("whisperapp.model_registry.ModelRegistry.deactivate_model") as mock_deact:
+        mock_deact.return_value = {"success": True}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post("/models/speechbrain-iemocap/deactivate")
+    assert r.status_code == 200
+    assert r.json()["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_catalogue_before_model_id_routing(app):
+    """FastAPI must resolve /models/catalogue before /models/{model_id}."""
+    with patch("whisperapp.model_registry.ModelRegistry.list_catalogue") as mock_catalogue:
+        mock_catalogue.return_value = {}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.get("/models/catalogue")
+    # Should hit catalogue endpoint, not model_id endpoint (which would 404)
+    assert r.status_code == 200

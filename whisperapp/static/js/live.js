@@ -159,6 +159,8 @@ function updateSubTitle(deviceName) {
 async function startRecording(container, formats) {
   const deviceId = container.querySelector('#device-select').value;
 
+  api.pauseWorker().catch(() => {});
+
   const streamRes = await api.streamStart({ model: 'base' });
   _session = streamRes.session_id;
   _elapsed = 0;
@@ -232,6 +234,8 @@ async function stopRecording(container) {
   if (_audioCtx)  { await _audioCtx.close(); _audioCtx = null; }
   if (_mediaStream) { _mediaStream.getTracks().forEach(t => t.stop()); _mediaStream = null; }
 
+  api.resumeWorker().catch(() => {});
+
   const sid = _session;
   _session = null;
 
@@ -300,8 +304,8 @@ async function startCheckLevels(container) {
         const amp = Math.abs(timeData[i * step] || 0);
         const h = Math.max(0.06, Math.min(1, 0.12 + amp * 4));
         bar.style.height = (h * 100) + '%';
-        bar.style.background = 'var(--ink-2)';
-        bar.style.opacity = 0.45 + amp * 0.55;
+        bar.style.background = 'var(--accent)';
+        bar.style.opacity = 0.3 + amp * 0.7;
       });
     }
     tick();

@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 
 def _config_dir() -> Path:
     override = os.environ.get("WHISPERAPP_CONFIG_DIR")
@@ -23,6 +23,27 @@ class Config:
     ai_api_key: str = ""
     ai_model: str = ""               # blank = use provider default
     ai_base_url: str = ""            # Ollama URL or OpenAI-compatible endpoint
+    # Startup behaviour
+    auto_update: bool = True         # run the WhisperX/pyannote update check on launch
+    # Pause detection settings
+    pause_detection: bool = True
+    pause_threshold: int = 3         # seconds
+    long_pause_threshold: int = 10   # seconds
+    gap_threshold: int = 30          # seconds
+    # Acoustic features
+    acoustic_enabled: bool = False
+    acoustic_volume_enabled: bool = True
+    acoustic_volume_threshold: float = 1.8
+    acoustic_pitch_enabled: bool = True
+    acoustic_pitch_threshold: float = 40.0
+    acoustic_rate_enabled: bool = True
+    acoustic_rate_fast_wpm: int = 180
+    acoustic_rate_slow_wpm: int = 90
+    # Emotion analysis
+    emotion_enabled: bool = False
+    emotion_model_ids: list = field(default_factory=list)
+    emotion_confidence_threshold: float = 0.65
+    emotion_combine_with_ai: bool = False
 
     def __post_init__(self):
         if not self.default_output_path:

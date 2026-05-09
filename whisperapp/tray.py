@@ -1,36 +1,99 @@
+import os
 import subprocess
 import sys
 import threading
 import webbrowser
 import pystray
 from PIL import Image, ImageDraw
-from whisperapp.startup import register_startup, unregister_startup
+from whisperapp.startup import register_startup, unregister_startup, is_startup_registered
 
 
 # ---------------------------------------------------------------------------
 # Icon factory
 # ---------------------------------------------------------------------------
 
-def _make_icon(bg: str, fg: str = "#faf8f4") -> Image.Image:
-    """64×64 brand mark: rounded square with 'w' waveform path."""
-    size = 64
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+_WAVEFORM_PTS = [(6, 12), (16, 52), (26, 20), (32, 20), (39, 52), (48, 20), (58, 52)]
+
+
+def _make_icon_template(color: str) -> Image.Image:
+    """Bare waveform on transparent background — used on macOS where the
+    status item is marked as a template image and auto-inverts for any menu
+    bar colour."""
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    # Rounded square — matches SVG: 32×32 viewBox, rx=9, 1px inset → scale ×2
-    d.rounded_rectangle([2, 2, 62, 62], radius=18, fill=bg)
-    # 'w' waveform path: SVG coords ×2 (32→64 scale)
-    # M8,12 L11,22 L14,14 L16,14 L18,22 L21,14 L24,22
-    pts = [(16, 24), (22, 44), (28, 28), (32, 28), (36, 44), (42, 28), (48, 44)]
-    d.line(pts, fill=fg, width=4, joint="curve")
+    d.line(_WAVEFORM_PTS, fill=color, width=6, joint="curve")
     return img
 
 
-ICONS = {
-    "idle":    _make_icon("#888888"),
-    "ready":   _make_icon("#5b9168"),   # --signal-go
-    "working": _make_icon("#c96442"),   # --accent terracotta
-    "error":   _make_icon("#c4523f"),   # --signal-rec
-}
+def _make_icon_filled(bg: str, fg: str = "#faf8f4") -> Image.Image:
+    """Rounded-square brand mark with waveform inside — used on Windows /
+    Linux where the system tray cannot auto-invert a template image, so a
+    bare stroke disappears against a same-colour taskbar."""
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([2, 2, 62, 62], radius=18, fill=bg)
+    d.line(_WAVEFORM_PTS, fill=fg, width=6, joint="curve")
+    return img
+
+
+if sys.platform == "darwin":
+    ICONS = {
+        "idle":    _make_icon_template("#ffffff"),
+        "ready":   _make_icon_template("#ffffff"),
+        "working": _make_icon_template("#c96442"),
+        "error":   _make_icon_template("#c4523f"),
+    }
+else:
+    # Windows / Linux: filled rounded square so the icon stays visible on
+    # both light and dark taskbars. Background colour signals state.
+    ICONS = {
+        "idle":    _make_icon_filled("#1f1d1a"),  # --ink (near-black)
+        "ready":   _make_icon_filled("#1f1d1a"),
+        "working": _make_icon_filled("#c96442"),  # --accent terracotta
+        "error":   _make_icon_filled("#c4523f"),  # --signal-rec
+    }
+
+
+# ---------------------------------------------------------------------------
+# App-mode browser launcher
+# ---------------------------------------------------------------------------
+
+def _open_app_window(url: str) -> None:
+    """Open url in a chromium app-mode window (no address bar).
+
+    On macOS uses the `open` command so the browser gets proper focus and
+    process group.  On Windows falls back to direct exe launch.
+    Falls back to the default browser if no chromium browser is found.
+    """
+    if sys.platform == "darwin":
+        app_names = [
+            "Google Chrome",
+            "Microsoft Edge",
+            "Brave Browser",
+        ]
+        for app in app_names:
+            path = f"/Applications/{app}.app"
+            if os.path.exists(path):
+                subprocess.Popen([
+                    "open", "-n", "-a", app,
+                    "--args", f"--app={url}",
+                ])
+                return
+    elif sys.platform == "win32":
+        pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+        pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        candidates = [
+            rf"{pf}\Google\Chrome\Application\chrome.exe",
+            rf"{pf86}\Google\Chrome\Application\chrome.exe",
+            rf"{pf}\Microsoft\Edge\Application\msedge.exe",
+            rf"{pf86}\Microsoft\Edge\Application\msedge.exe",
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                subprocess.Popen([path, f"--app={url}"])
+                return
+
+    webbrowser.open(url)
 
 
 # ---------------------------------------------------------------------------
@@ -50,20 +113,9 @@ class TrayApp:
     # ------------------------------------------------------------------
 
     def _check_startup_registered(self) -> bool:
-        try:
-            if sys.platform == "win32":
-                import winreg as _winreg
-                key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-                with _winreg.OpenKey(_winreg.HKEY_CURRENT_USER, key_path) as k:
-                    _winreg.QueryValueEx(k, "WhisperApp")
-                return True
-            elif sys.platform == "darwin":
-                from pathlib import Path
-                plist = Path.home() / "Library/LaunchAgents/com.whisperapp.plist"
-                return plist.exists()
-        except Exception:
-            pass
-        return False
+        # Delegate to whisperapp.startup so the server endpoint and the tray
+        # menu agree on the same source of truth (Windows registry / Mac plist).
+        return is_startup_registered()
 
     def _toggle_startup(self, icon, item):
         if self._startup_enabled:
@@ -81,16 +133,6 @@ class TrayApp:
     # ------------------------------------------------------------------
 
     def _build_menu(self):
-        startup_label = (
-            "✓ Start on login" if self._startup_enabled else "Start on login"
-        )
-        # pystray doesn't render unicode on all platforms — use plain text fallback
-        if sys.platform == "win32":
-            startup_label = (
-                "[ON] Start on login" if self._startup_enabled
-                else "[ ]  Start on login"
-            )
-
         active = len([j for j in self.queue.list_jobs(limit=50)
                       if j["status"] == "running"])
         status_label = (
@@ -115,8 +157,16 @@ class TrayApp:
             items.append(pystray.Menu.SEPARATOR)
 
         items += [
-            pystray.MenuItem(startup_label, self._toggle_startup),
+            # `checked=` makes pystray render the platform-native checkmark
+            # indicator — a real check glyph on Windows and macOS — instead of
+            # us munging the label text with brackets or unicode symbols.
+            pystray.MenuItem(
+                "Start on login",
+                self._toggle_startup,
+                checked=lambda _item: self._startup_enabled,
+            ),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Restart", self._restart),
             pystray.MenuItem("Quit", self._quit),
         ]
         return pystray.Menu(*items)
@@ -126,13 +176,22 @@ class TrayApp:
     # ------------------------------------------------------------------
 
     def _open_ui(self, icon=None, item=None):
-        webbrowser.open("http://127.0.0.1:7860")
+        _open_app_window("http://127.0.0.1:7860")
 
     def _open_api(self, icon=None, item=None):
         webbrowser.open("http://127.0.0.1:7861/docs")
 
+    def _restart(self, icon, item):
+        from whisperapp.config import _config_dir
+        # Clear PID lock so the new instance can acquire it immediately
+        (_config_dir() / "whisperapp.pid").unlink(missing_ok=True)
+        subprocess.Popen([sys.executable, '-m', 'whisperapp'])
+        icon.stop()
+        os._exit(0)
+
     def _quit(self, icon, item):
         icon.stop()
+        os._exit(0)
 
     def _notify(self, message: str, title: str = "WhisperApp") -> None:
         """Send a native OS notification. Best-effort — never raises."""
@@ -210,6 +269,10 @@ class TrayApp:
             self._watcher.on_trigger = self._on_meeting_detected
             self._watcher.start()
 
-        # On macOS, pystray uses the menu bar automatically via rumps/AppKit.
-        # On Windows, it appears in the system tray notification area.
-        self._icon.run()
+        # pystray's Windows backend leaves the icon hidden until something
+        # explicitly sets `visible = True` — the `setup` callback is pystray's
+        # idiomatic place to do that. macOS shows the menu-bar item as soon as
+        # `_NSStatusItem` is constructed, so this is a no-op there but harmless.
+        def _setup(icon):
+            icon.visible = True
+        self._icon.run(setup=_setup)

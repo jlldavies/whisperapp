@@ -71,6 +71,23 @@ _LIVE_SUMMARY_USER = """Transcript so far:
 Provide a brief bullet-point summary."""
 
 
+def _format_snippet_samples(snippets: dict) -> str:
+    """Render the {label: [snippet, ...]} dict for the LLM prompt.
+
+    Each snippet may be either a plain string (legacy) or a dict with at
+    least a `text` field (new shape from extract_speaker_snippets, which
+    also carries start/end for the audio player).
+    """
+    def _text(s):
+        if isinstance(s, dict):
+            return s.get("text", "")
+        return str(s)
+    return "\n".join(
+        f"{label}:\n" + "\n".join(f"  - {_text(s)}" for s in lines[:5])
+        for label, lines in snippets.items()
+    )
+
+
 # ---------------------------------------------------------------------------
 # Base class
 # ---------------------------------------------------------------------------
@@ -165,10 +182,7 @@ class ClaudeProvider(AIProvider):
     def identify_speakers(self, snippets, context=""):
         if not snippets:
             return {}
-        samples = "\n".join(
-            f"{label}:\n" + "\n".join(f"  - {line}" for line in lines[:5])
-            for label, lines in snippets.items()
-        )
+        samples = _format_snippet_samples(snippets)
         user = _SPEAKER_ID_USER.format(context=context or "Not provided", samples=samples)
         raw = self._call(_SPEAKER_ID_SYSTEM, user)
         return _parse_json_mapping(raw)
@@ -234,10 +248,7 @@ class OpenAIProvider(AIProvider):
     def identify_speakers(self, snippets, context=""):
         if not snippets:
             return {}
-        samples = "\n".join(
-            f"{label}:\n" + "\n".join(f"  - {line}" for line in lines[:5])
-            for label, lines in snippets.items()
-        )
+        samples = _format_snippet_samples(snippets)
         user = _SPEAKER_ID_USER.format(context=context or "Not provided", samples=samples)
         raw = self._call(_SPEAKER_ID_SYSTEM, user)
         return _parse_json_mapping(raw)
@@ -301,10 +312,7 @@ class OllamaProvider(AIProvider):
     def identify_speakers(self, snippets, context=""):
         if not snippets:
             return {}
-        samples = "\n".join(
-            f"{label}:\n" + "\n".join(f"  - {line}" for line in lines[:5])
-            for label, lines in snippets.items()
-        )
+        samples = _format_snippet_samples(snippets)
         user = _SPEAKER_ID_USER.format(context=context or "Not provided", samples=samples)
         raw = self._call(_SPEAKER_ID_SYSTEM, user)
         return _parse_json_mapping(raw)

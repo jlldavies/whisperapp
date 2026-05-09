@@ -26,8 +26,9 @@ _PASSTHROUGH_PATCH = patch(
 
 
 @_PASSTHROUGH_PATCH
+@patch("whisperapp.worker._has_mlx_whisper", return_value=False)
 @patch("whisperapp.worker.whisperx")
-def test_worker_marks_job_running(mock_wx, setup):
+def test_worker_marks_job_running(mock_wx, _mock_mlx, setup):
     from whisperapp.worker import Worker
     q, job_id, tmp_path = setup
     mock_model = MagicMock()
@@ -46,8 +47,9 @@ def test_worker_marks_job_running(mock_wx, setup):
     assert job["status"] in (JobStatus.DONE, JobStatus.SPEAKER_REVIEW)
 
 @_PASSTHROUGH_PATCH
+@patch("whisperapp.worker._has_mlx_whisper", return_value=False)
 @patch("whisperapp.worker.whisperx")
-def test_worker_saves_checkpoints(mock_wx, setup):
+def test_worker_saves_checkpoints(mock_wx, _mock_mlx, setup):
     from whisperapp.worker import Worker
     q, job_id, tmp_path = setup
     mock_model = MagicMock()
@@ -87,11 +89,12 @@ def test_worker_device_is_valid():
     if _DEVICE == "cuda":
         assert _COMPUTE_TYPE == "float16"
     else:
-        assert _COMPUTE_TYPE == "float32"
+        assert _COMPUTE_TYPE in ("float32", "int8")
 
 @_PASSTHROUGH_PATCH
+@patch("whisperapp.worker._has_mlx_whisper", return_value=False)
 @patch("whisperapp.worker.whisperx")
-def test_worker_uses_module_device(mock_wx, setup):
+def test_worker_uses_module_device(mock_wx, _mock_mlx, setup):
     """Verify that process_job passes _DEVICE to whisperx calls."""
     from whisperapp.worker import Worker, _DEVICE, _COMPUTE_TYPE
     q, job_id, tmp_path = setup

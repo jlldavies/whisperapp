@@ -30,7 +30,16 @@ dependencies = [
     "pyaudio",
     "soundfile",
     "psutil",
+    "mutagen",
+    # Acoustic analysis (volume / pitch / speaking-rate markers in transcripts).
+    # Pure DSP — no AI provider needed. The settings panel's master toggle is a
+    # no-op without this.
+    "librosa",
     "pyobjc-framework-AVFoundation; sys_platform == 'darwin'",
+    # Windows: route SSL through the Windows certificate store so corporate
+    # proxies / AV TLS inspectors (Norton, ZScaler, etc.) work without manual
+    # certifi tweaks.
+    "truststore; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

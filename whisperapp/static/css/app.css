@@ -28,41 +28,7 @@ h1, h2, h3 { letter-spacing: -0.022em; font-weight: 600; }
   background: var(--paper);
 }
 
-#titlebar {
-  height: 36px;
-  min-height: 36px;
-  background: var(--paper-2);
-  border-bottom: 1px solid var(--rule);
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  gap: 12px;
-  -webkit-app-region: drag;
-  user-select: none;
-}
-#traffic-lights {
-  display: flex;
-  gap: 7px;
-  -webkit-app-region: no-drag;
-}
-.tl-dot {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: var(--rule-strong);
-  cursor: pointer;
-  transition: background 0.1s;
-}
-.tl-dot:hover { filter: brightness(0.85); }
-#window-title-text {
-  flex: 1;
-  text-align: center;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--ink-3);
-}
 #theme-toggle {
-  -webkit-app-region: no-drag;
   width: 24px;
   height: 24px;
   border-radius: var(--radius-sm);
@@ -73,6 +39,7 @@ h1, h2, h3 { letter-spacing: -0.022em; font-weight: 600; }
   display: grid;
   place-items: center;
   line-height: 1;
+  cursor: pointer;
 }
 #theme-toggle:hover { background: var(--paper-3); }
 
@@ -105,7 +72,7 @@ h1, h2, h3 { letter-spacing: -0.022em; font-weight: 600; }
   display: grid; place-items: center;
   border-radius: 7px;
   background: var(--ink);
-  color: var(--paper);
+  color: var(--ink);
   flex-shrink: 0;
 }
 .wa-brand-name { font-weight: 600; letter-spacing: -0.02em; font-size: 15px; }
@@ -290,6 +257,193 @@ h1, h2, h3 { letter-spacing: -0.022em; font-weight: 600; }
 .wa-btn-accent { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .wa-btn-danger { color: var(--signal-rec); border-color: color-mix(in oklch, var(--signal-rec) 30%, var(--rule)); }
 .wa-btn-danger:hover { background: color-mix(in oklch, var(--signal-rec) 8%, var(--paper)); }
+.wa-btn-ghost {
+  background: transparent;
+  color: var(--ink-3);
+  border-color: transparent;
+}
+.wa-btn-ghost:hover { background: var(--paper-3); color: var(--ink); }
+.wa-btn-warn {
+  background: var(--signal-wait);
+  color: #fff;
+  border-color: var(--signal-wait);
+}
+.wa-btn-warn:hover { opacity: 0.9; }
+.wa-btn-sm {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  border-radius: 5px;
+}
+.wa-btn-md {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+  border-radius: 6px;
+}
+
+/* ─── Status dot (models page) ────────────────────────────────────────── */
+.wa-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.wa-status-dot.active {
+  background: var(--signal-go);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--signal-go) 22%, transparent);
+  animation: status-dot-pulse 2s ease-in-out infinite;
+}
+.wa-status-dot.installed { background: var(--signal-go); }
+.wa-status-dot.update {
+  background: var(--signal-wait);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--signal-wait) 22%, transparent);
+  animation: status-dot-pulse 2s ease-in-out infinite;
+}
+.wa-status-dot.downloading {
+  background: var(--signal-wait);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--signal-wait) 22%, transparent);
+  animation: status-dot-pulse 2s ease-in-out infinite;
+}
+.wa-status-dot.available { background: var(--ink-4); }
+@keyframes status-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px color-mix(in oklch, currentcolor 22%, transparent); }
+  50%       { box-shadow: 0 0 0 6px color-mix(in oklch, currentcolor 10%, transparent); }
+}
+
+/* ─── Models page ─────────────────────────────────────────────────────── */
+.models-category-card {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.models-category-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+}
+.models-active-band {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--paper-2);
+}
+.models-active-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 14px;
+  align-items: center;
+  padding: 11px 14px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+.models-drawer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 18px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+.models-drawer-toggle:hover { background: var(--paper-2); }
+.models-library-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+}
+.models-progress-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--paper-3);
+  overflow: hidden;
+  margin-top: 8px;
+}
+.models-progress-fill {
+  height: 100%;
+  background: var(--signal-wait);
+  transition: width 0.3s;
+}
+.models-size-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  background: var(--paper-3);
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+.models-role-chip {
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--paper);
+}
+.models-recommended-chip {
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--accent) 14%, transparent);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.models-state-meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 6px;
+}
+.models-disk-summary {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  padding: 18px;
+  margin-bottom: 18px;
+}
+.models-stacked-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--paper-3);
+  margin-top: 14px;
+}
+.models-footer-note {
+  margin-top: 8px;
+  padding: 14px;
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.models-chevron {
+  transition: transform 0.15s;
+  color: var(--ink-3);
+  flex-shrink: 0;
+}
+.models-chevron.open { transform: rotate(90deg); }
 
 /* ─── Chips ──────────────────────────────────────────────────────────── */
 .wa-chip {
@@ -392,6 +546,47 @@ h1, h2, h3 { letter-spacing: -0.022em; font-weight: 600; }
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
+.queue-badge-link {
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+  background: color-mix(in oklch, var(--accent) 14%, transparent);
+  color: var(--accent);
+  transition: background 0.12s;
+}
+.queue-badge-link:hover {
+  background: color-mix(in oklch, var(--accent) 25%, transparent);
+}
+.queue-remove-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--ink-4);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.queue-remove-btn:hover { color: var(--signal-rec); }
+.queue-reorder-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex-shrink: 0;
+}
+.queue-reorder-btn {
+  background: none;
+  border: none;
+  color: var(--ink-4);
+  cursor: pointer;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 1.2;
+}
+.queue-reorder-btn:hover:not(:disabled) { color: var(--ink); }
+.queue-reorder-btn:disabled { opacity: 0.2; cursor: default; }
+
 .queue-meta {
   font-family: var(--font-mono);
   font-size: 10.5px;
@@ -490,6 +685,49 @@ h1, h2, h3 { letter-spacing: -0.022em; font-weight: 600; }
   cursor: pointer;
 }
 .snippet-play:hover { background: var(--ink-2); }
+.snippet-play.playing {
+  background: var(--accent);
+  color: var(--accent-ink, var(--paper));
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--accent) 25%, transparent);
+}
+
+/* Ghost-text autocomplete on the speaker-name input.
+   The wrap is inline-block so the ghost layer hugs the input width. The
+   input sits on top with a transparent background; the ghost layer behind
+   uses an invisible span sized to the typed prefix, then a faded suggestion
+   span that the user accepts with Tab. Same font/size as the input so the
+   suggestion lines up character-perfectly. */
+.speaker-name-wrap {
+  position: relative;
+  display: inline-block;
+  vertical-align: baseline;
+}
+.speaker-name-ghost {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: pre;
+  line-height: inherit;
+  letter-spacing: inherit;
+  color: var(--ink-4);
+}
+.speaker-name-ghost .ghost-typed { visibility: hidden; }
+.speaker-name-ghost .ghost-suggest { color: var(--ink-4); opacity: 0.55; }
+#speaker-name-input {
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  outline: none;
+  width: 200px;
+  position: relative;
+  z-index: 1;
+}
 
 /* ─── Settings ───────────────────────────────────────────────────────── */
 .settings-subnav {
@@ -505,9 +743,20 @@ h1, h2, h3 { letter-spacing: -0.022em; font-weight: 600; }
   border-radius: var(--radius-sm);
   color: var(--ink-3);
   cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
 }
 .settings-subnav-item:hover { background: var(--paper-2); }
 .settings-subnav-item.active { color: var(--ink); background: var(--paper-2); font-weight: 500; }
+/* Red `*` after a sub-nav label when the section has pending updates. */
+.settings-update-pip {
+  color: var(--signal-rec);
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1;
+}
 .settings-section { display: flex; flex-direction: column; gap: 14px; }
 .settings-section-head {
   display: flex;

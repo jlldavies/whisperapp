@@ -18,6 +18,9 @@ TRIGGER_APPS: dict[str, str] = {
 }
 
 
+NOTIFICATION_COOLDOWN = 300.0  # seconds between repeated notifications for the same trigger
+
+
 class MeetingWatcher:
     """Polls for meeting-app launches and mic-in-use events, fires on_trigger callback."""
 
@@ -32,6 +35,7 @@ class MeetingWatcher:
         self._active_apps: set[str] = set()   # display names currently running
         self._mic_notified = False             # True while mic notification is active
         self._dismissed = False                # True after user dismisses; resets on condition change
+        self._last_notified: dict[str, float] = {}  # trigger key → monotonic time of last notification
         self._lock = threading.Lock()
 
     def start(self) -> None:
@@ -77,6 +81,7 @@ class MeetingWatcher:
 
     def _check_apps(self) -> None:
         running = _running_trigger_apps()
+        now = time.monotonic()
         with self._lock:
             new_apps = running - self._active_apps
             gone_apps = self._active_apps - running
@@ -85,16 +90,32 @@ class MeetingWatcher:
                 # All trigger apps closed — reset state so next launch gets a fresh notification
                 self._mic_notified = False
                 self._dismissed = False
-            notify = [(name,) for name in new_apps if not self._dismissed]
-        for (name,) in notify:
+            # Clear cooldown for any app that just closed so re-launching always notifies
+            for name in gone_apps:
+                self._last_notified.pop(f"app:{name}", None)
+            notify = []
+            for name in new_apps:
+                if self._dismissed:
+                    continue
+                key = f"app:{name}"
+                if now - self._last_notified.get(key, 0.0) >= NOTIFICATION_COOLDOWN:
+                    self._last_notified[key] = now
+                    notify.append(name)
+        for name in notify:
             self._on_trigger("app", name)
 
     def _check_mic(self) -> None:
         in_use = _mic_in_use()
+        now = time.monotonic()
         with self._lock:
             if in_use and not self._mic_notified:
                 self._mic_notified = True
-                should_notify = not self._dismissed
+                if (not self._dismissed
+                        and now - self._last_notified.get("mic", 0.0) >= NOTIFICATION_COOLDOWN):
+                    self._last_notified["mic"] = now
+                    should_notify = True
+                else:
+                    should_notify = False
             elif not in_use and self._mic_notified:
                 # Mic released — reset so next activation triggers again
                 self._mic_notified = False

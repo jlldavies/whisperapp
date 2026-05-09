@@ -1,7 +1,10 @@
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from typing import Optional, List
 import base64
+import json
+import sys
 import uuid
 import shutil
 import numpy as np
@@ -82,6 +85,21 @@ class AILiveSummaryRequest(BaseModel):
 
 def create_app(queue: JobQueue, worker) -> FastAPI:
     app = FastAPI(title="WhisperApp API", version="1.1.0")
+
+    # Shared ModelManager instance (emotion models)
+    from whisperapp.emotion_registry import ModelManager
+    _model_manager = ModelManager()
+
+    # Unified model registry (all categories)
+    from whisperapp.model_registry import ModelRegistry
+    _model_registry = ModelRegistry()
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://127.0.0.1:7860", "http://localhost:7860"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # In-memory streaming sessions (local-only server, so this is fine)
     _sessions: dict = {}
@@ -166,6 +184,11 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
             raise HTTPException(status_code=404, detail="Job not found")
         return job
 
+    @app.post("/jobs/clear")
+    async def clear_completed_jobs():
+        count = queue.clear_completed()
+        return {"cleared": count}
+
     @app.post("/jobs/{job_id}/cancel")
     async def cancel_job(job_id: str):
         try:
@@ -174,6 +197,53 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
             raise HTTPException(status_code=422, detail="Invalid job_id")
         queue.cancel_job(job_id)
         return {"success": True}
+
+    @app.delete("/jobs/{job_id}")
+    async def delete_job(job_id: str):
+        """Permanently remove a job from the queue and history."""
+        try:
+            sanitise_job_id(job_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid job_id")
+        queue.delete_job(job_id)
+        return {"success": True}
+
+    @app.post("/jobs/{job_id}/move-up")
+    async def move_job_up(job_id: str):
+        """Move a queued job one position earlier in the queue."""
+        try:
+            sanitise_job_id(job_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid job_id")
+        queue.move_job_up(job_id)
+        return {"success": True}
+
+    @app.post("/jobs/{job_id}/move-down")
+    async def move_job_down(job_id: str):
+        """Move a queued job one position later in the queue."""
+        try:
+            sanitise_job_id(job_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid job_id")
+        queue.move_job_down(job_id)
+        return {"success": True}
+
+    @app.get("/worker/status")
+    async def worker_status():
+        """Return whether the worker is paused. Paused means queued jobs won't start."""
+        return {"paused": worker.is_paused}
+
+    @app.post("/worker/pause")
+    async def pause_worker():
+        """Pause the worker. The current job finishes; no new jobs start until resumed."""
+        worker.pause()
+        return {"paused": True}
+
+    @app.post("/worker/resume")
+    async def resume_worker():
+        """Resume the worker after a pause."""
+        worker.resume()
+        return {"paused": False}
 
     @app.get("/jobs/{job_id}/transcript")
     async def get_transcript(job_id: str, format: str = "txt"):
@@ -216,6 +286,94 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         from whisperapp.speakers import extract_speaker_snippets
         snippets = extract_speaker_snippets(result)
         return {"speakers": snippets}
+
+    @app.get("/jobs/{job_id}/segments")
+    async def get_job_segments(
+        job_id: str,
+        offset: int = 0,
+        limit: int = 200,
+        include_words: bool = False,
+    ):
+        """Return diarized transcript segments page-by-page.
+
+        Works for both `speaker_review` (loads the in-progress checkpoint) and
+        `done` (loads the final checkpoint or saved JSON). Each segment is
+        `{start, end, speaker, text}`; word-level timestamps are stripped by
+        default to keep the response lean — set `include_words=true` to keep
+        them. Useful for AI-driven speaker identification that needs full
+        transcript context, not just a few snippets per speaker.
+        """
+        try:
+            sanitise_job_id(job_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid job_id")
+        if limit < 1 or limit > 500:
+            raise HTTPException(status_code=422, detail="limit must be 1..500")
+        if offset < 0:
+            raise HTTPException(status_code=422, detail="offset must be >= 0")
+        job = queue.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job["status"] not in (JobStatus.SPEAKER_REVIEW, JobStatus.DONE):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Job has no transcript yet: {job['status']}",
+            )
+        cm = CheckpointManager(job["output_path"], job_id)
+        # Try the speaker_review checkpoint first (most current view of the
+        # diarized transcript); fall back to disk-saved JSON for done jobs
+        # where the checkpoint may have been cleaned up.
+        result = None
+        try:
+            result = cm.load("speaker_review")
+        except Exception:
+            result = None
+        if result is None and job["status"] == JobStatus.DONE:
+            stem = Path(job["file_path"]).stem
+            json_path = Path(job["output_path"]) / f"{stem}.json"
+            if json_path.exists():
+                result = json.loads(json_path.read_text(encoding="utf-8"))
+        if result is None:
+            raise HTTPException(status_code=404, detail="Transcript data not available")
+
+        all_segs = result.get("segments", []) or []
+        total = len(all_segs)
+        page = all_segs[offset : offset + limit]
+        if not include_words:
+            page = [{k: v for k, v in s.items() if k != "words"} for s in page]
+        return {
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "next_offset": offset + len(page) if offset + len(page) < total else None,
+            "segments": page,
+        }
+
+    @app.get("/jobs/{job_id}/audio")
+    async def get_job_audio(job_id: str):
+        """Stream the source audio file for a job so the speaker-review UI
+        can play snippets at specific timestamps. Only the file path stored
+        on the job itself is allowed — never an arbitrary path from the
+        client. Range requests are handled by FileResponse for seeking."""
+        try:
+            sanitise_job_id(job_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid job_id")
+        job = queue.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        from fastapi.responses import FileResponse
+        path = Path(job["file_path"])
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Source audio missing on disk")
+        # Common audio/video MIME hints — browsers will fall back gracefully.
+        mime_map = {
+            ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4",
+            ".mp4": "video/mp4", ".mov": "video/quicktime",
+            ".webm": "audio/webm", ".ogg": "audio/ogg", ".flac": "audio/flac",
+        }
+        media_type = mime_map.get(path.suffix.lower(), "application/octet-stream")
+        return FileResponse(str(path), media_type=media_type, filename=path.name)
 
     @app.post("/jobs/{job_id}/speakers")
     async def confirm_speakers(job_id: str, req: SpeakerReviewRequest):
@@ -378,6 +536,168 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         }
 
     # -----------------------------------------------------------------------
+    # Emotion model endpoints
+    # -----------------------------------------------------------------------
+
+    @app.get("/models")
+    async def list_models():
+        """List all available emotion models with download status."""
+        return _model_manager.list_all()
+
+    # ── New unified catalogue endpoints (MUST be before /models/{model_id}) ──
+
+    @app.get("/models/catalogue")
+    async def get_models_catalogue():
+        """Return the full model catalogue with state for all categories."""
+        return _model_registry.list_catalogue()
+
+    @app.get("/models/disk-summary")
+    async def get_disk_summary():
+        """Return disk usage by model category."""
+        return _model_registry.get_disk_summary()
+
+    @app.post("/models/check-updates")
+    async def check_model_updates():
+        """Force a fresh update check across all capabilities (and, in the
+        future, models). Clears in-process caches so the next catalogue
+        render has up-to-date `state == "update"` flags."""
+        return _model_registry.force_check_updates()
+
+    @app.post("/models/add-custom")
+    async def add_custom_model():
+        """Stub: custom model import from HuggingFace."""
+        return {"status": "not_implemented", "message": "Custom model import coming soon"}
+
+    @app.post("/models/{model_id}/activate")
+    async def activate_model(model_id: str):
+        """Set a model as active in its category."""
+        result = _model_registry.activate_model(model_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=result.get("error", "Not found"))
+        return result
+
+    @app.post("/models/{model_id}/deactivate")
+    async def deactivate_model(model_id: str):
+        """Remove a model from the active set."""
+        result = _model_registry.deactivate_model(model_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=result.get("error", "Not found"))
+        return result
+
+    @app.post("/models/{model_id}/update")
+    async def update_model(model_id: str):
+        """Trigger a model/capability update."""
+        from whisperapp.emotion_registry import _REGISTRY_BY_ID
+        if model_id in _REGISTRY_BY_ID:
+            _model_manager.download(model_id)  # restart download = update
+            return {"success": True, "message": f"Update started for {model_id}"}
+        if _model_registry.is_capability(model_id):
+            return _model_registry.update_capability(model_id)
+        # HuggingFace-backed models — re-pull the latest revision in the
+        # background. The catalogue will reflect `downloading` until done,
+        # then `installed` (or `active`) once the new sha is saved.
+        from whisperapp.model_registry import _hf_repo_for
+        if _hf_repo_for(model_id):
+            return _model_registry.update_hf_model(model_id)
+        return {"status": "not_implemented"}
+
+    # ── Storage ──────────────────────────────────────────────────────────────
+
+    @app.post("/storage/reveal")
+    async def reveal_storage():
+        """Open the WhisperApp storage directory in Finder/Explorer."""
+        import subprocess
+        import sys
+        path = str(Path.home() / ".whisperapp")
+        Path(path).mkdir(parents=True, exist_ok=True)
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            elif sys.platform == "win32":
+                subprocess.Popen(["explorer", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        return {"success": True, "path": path}
+
+    # ── Startup registration (launch on login) ──────────────────────────────
+
+    @app.get("/startup/status")
+    async def startup_status():
+        """Return whether WhisperApp is registered to launch at login on
+        this machine. Cross-platform — uses the HKCU Run key on Windows and
+        the LaunchAgent plist on macOS."""
+        from whisperapp.startup import is_startup_registered
+        return {"registered": is_startup_registered(), "platform": sys.platform}
+
+    @app.post("/startup/enable")
+    async def startup_enable():
+        from whisperapp.startup import register_startup, is_startup_registered
+        try:
+            register_startup()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"register failed: {e}")
+        return {"registered": is_startup_registered()}
+
+    @app.post("/startup/disable")
+    async def startup_disable():
+        from whisperapp.startup import unregister_startup, is_startup_registered
+        try:
+            unregister_startup()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"unregister failed: {e}")
+        return {"registered": is_startup_registered()}
+
+    @app.get("/models/{model_id}")
+    async def get_model(model_id: str):
+        """Get status for a single emotion model."""
+        from whisperapp.emotion_registry import _REGISTRY_BY_ID
+        if model_id not in _REGISTRY_BY_ID:
+            raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+        status = _model_manager.get_status(model_id)
+        entry = dict(_REGISTRY_BY_ID[model_id])
+        entry.update(status)
+        return entry
+
+    @app.post("/models/{model_id}/download")
+    async def download_model(model_id: str):
+        """Start downloading / installing a model or capability (returns
+        immediately; the install runs in a background thread and progress is
+        reflected in /models/catalogue)."""
+        from whisperapp.emotion_registry import _REGISTRY_BY_ID
+        if model_id in _REGISTRY_BY_ID:
+            _model_manager.download(model_id)
+            return {"success": True, "message": f"Download started for {model_id}"}
+        if _model_registry.is_capability(model_id):
+            return _model_registry.install_capability(model_id)
+        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+
+    @app.delete("/models/{model_id}")
+    async def delete_model(model_id: str):
+        """Uninstall a downloaded emotion model or pip capability."""
+        from whisperapp.emotion_registry import _REGISTRY_BY_ID
+        if model_id in _REGISTRY_BY_ID:
+            _model_manager.delete(model_id)
+            return {"success": True}
+        if _model_registry.is_capability(model_id):
+            return _model_registry.uninstall_capability(model_id)
+        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+
+    @app.get("/models/{model_id}/progress")
+    async def model_progress(model_id: str):
+        """Get download progress for an emotion model."""
+        from whisperapp.emotion_registry import _REGISTRY_BY_ID
+        if model_id not in _REGISTRY_BY_ID:
+            raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+        status = _model_manager.get_status(model_id)
+        return {
+            "progress": status["progress"],
+            "downloading": status["downloading"],
+            "error": status["error"],
+        }
+
+    # -----------------------------------------------------------------------
     # Config endpoints
     # -----------------------------------------------------------------------
 
@@ -394,6 +714,25 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
             "ai_api_key": cfg.ai_api_key,
             "ai_model": cfg.ai_model,
             "ai_base_url": cfg.ai_base_url,
+            "auto_update": cfg.auto_update,
+            "pause_detection": cfg.pause_detection,
+            "pause_threshold": cfg.pause_threshold,
+            "long_pause_threshold": cfg.long_pause_threshold,
+            "gap_threshold": cfg.gap_threshold,
+            # Acoustic features
+            "acoustic_enabled": cfg.acoustic_enabled,
+            "acoustic_volume_enabled": cfg.acoustic_volume_enabled,
+            "acoustic_volume_threshold": cfg.acoustic_volume_threshold,
+            "acoustic_pitch_enabled": cfg.acoustic_pitch_enabled,
+            "acoustic_pitch_threshold": cfg.acoustic_pitch_threshold,
+            "acoustic_rate_enabled": cfg.acoustic_rate_enabled,
+            "acoustic_rate_fast_wpm": cfg.acoustic_rate_fast_wpm,
+            "acoustic_rate_slow_wpm": cfg.acoustic_rate_slow_wpm,
+            # Emotion analysis
+            "emotion_enabled": cfg.emotion_enabled,
+            "emotion_model_ids": cfg.emotion_model_ids,
+            "emotion_confidence_threshold": cfg.emotion_confidence_threshold,
+            "emotion_combine_with_ai": cfg.emotion_combine_with_ai,
         }
 
     @app.post("/config")
@@ -404,6 +743,16 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
             "hf_token", "default_model", "default_output_path",
             "diarize_by_default", "streaming_model",
             "ai_provider", "ai_api_key", "ai_model", "ai_base_url",
+            "auto_update",
+            "pause_detection", "pause_threshold",
+            "long_pause_threshold", "gap_threshold",
+            # Acoustic features
+            "acoustic_enabled", "acoustic_volume_enabled", "acoustic_volume_threshold",
+            "acoustic_pitch_enabled", "acoustic_pitch_threshold",
+            "acoustic_rate_enabled", "acoustic_rate_fast_wpm", "acoustic_rate_slow_wpm",
+            # Emotion analysis
+            "emotion_enabled", "emotion_model_ids",
+            "emotion_confidence_threshold", "emotion_combine_with_ai",
         }
         for k, v in data.items():
             if k in allowed:

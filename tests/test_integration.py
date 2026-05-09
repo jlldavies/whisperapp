@@ -9,8 +9,7 @@ from whisperapp.queue import JobQueue, JobStatus
 from whisperapp.worker import Worker
 from whisperapp.config import Config
 
-HF_TOKEN = os.environ.get(
-    "HF_TOKEN", "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")
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
 TEST_AUDIO = Path(__file__).parent / "fixtures" / "test_5sec.wav"
 
 @pytest.mark.integration

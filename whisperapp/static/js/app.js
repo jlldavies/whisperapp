@@ -18,14 +18,7 @@ function onNavigate(id) {
   renderSidebar(document.getElementById('sidebar'), id, id => _router.navigate(id));
 }
 
-// Theme
-const themeBtn = document.getElementById('theme-toggle');
-themeBtn.addEventListener('click', () => {
-  const html = document.documentElement;
-  const next = html.dataset.theme === 'dark' ? 'light' : 'dark';
-  html.dataset.theme = next;
-  localStorage.setItem('wa-theme', next);
-});
+// Restore saved theme
 const saved = localStorage.getItem('wa-theme');
 if (saved) document.documentElement.dataset.theme = saved;
 

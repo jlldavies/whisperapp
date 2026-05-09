@@ -1,7 +1,7 @@
 export const LOGO_SVG = `<svg width="26" height="26" viewBox="0 0 32 32" fill="none">
   <rect x="1" y="1" width="30" height="30" rx="9" fill="currentColor"/>
   <path d="M8 12 L11 22 L14 14 L16 14 L18 22 L21 14 L24 22"
-    stroke="var(--paper)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    style="stroke:var(--paper)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 </svg>`;
 
 export const NAV_ICONS = {

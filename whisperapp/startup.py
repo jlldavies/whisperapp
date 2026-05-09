@@ -53,6 +53,23 @@ def _launch_command() -> list[str]:
 # Public API
 # ---------------------------------------------------------------------------
 
+def is_startup_registered() -> bool:
+    """Return True if WhisperApp is currently registered to launch at login.
+    Cross-platform: checks the HKCU Run key on Windows and the LaunchAgent
+    plist on macOS. Returns False on Linux (and on errors)."""
+    try:
+        if sys.platform == "win32":
+            key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as k:
+                winreg.QueryValueEx(k, APP_NAME)
+            return True
+        elif sys.platform == "darwin":
+            return PLIST_PATH.exists()
+    except Exception:
+        pass
+    return False
+
+
 def register_startup():
     if sys.platform == "win32":
         _register_windows()

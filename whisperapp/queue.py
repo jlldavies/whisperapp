@@ -50,21 +50,32 @@ class JobQueue:
                     error TEXT,
                     created_at TEXT NOT NULL,
                     started_at TEXT,
-                    completed_at TEXT
+                    completed_at TEXT,
+                    order_idx INTEGER NOT NULL DEFAULT 0
                 )
             """)
+            try:
+                conn.execute("ALTER TABLE jobs ADD COLUMN order_idx INTEGER NOT NULL DEFAULT 0")
+            except Exception:
+                pass
+            # Backfill any rows with order_idx=0 using their rowid
+            conn.execute("UPDATE jobs SET order_idx = rowid WHERE order_idx = 0")
 
     def create_job(self, file_path, output_path, model, diarize, formats) -> str:
         job_id = str(uuid.uuid4())
         with self._conn() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(order_idx), 0) + 1 FROM jobs"
+            ).fetchone()
+            order_idx = row[0] if row else 1
             conn.execute("""
                 INSERT INTO jobs (id, file_path, file_name, output_path, model,
-                    diarize, formats, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    diarize, formats, status, created_at, order_idx)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (job_id, str(file_path), Path(file_path).name,
                   str(output_path), model, int(diarize),
                   json.dumps(formats), JobStatus.QUEUED,
-                  datetime.now(timezone.utc).isoformat()))
+                  datetime.now(timezone.utc).isoformat(), order_idx))
         return job_id
 
     def get_job(self, job_id) -> dict:
@@ -100,9 +111,47 @@ class JobQueue:
     def cancel_job(self, job_id):
         with self._conn() as conn:
             conn.execute(
-                "UPDATE jobs SET status=? WHERE id=? AND status IN (?, ?)",
-                (JobStatus.CANCELLED, job_id, JobStatus.QUEUED, JobStatus.RUNNING)
+                "UPDATE jobs SET status=? WHERE id=? AND status NOT IN (?, ?)",
+                (JobStatus.CANCELLED, job_id, JobStatus.DONE, JobStatus.CANCELLED)
             )
+
+    def delete_job(self, job_id):
+        with self._conn() as conn:
+            conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+
+    def move_job_up(self, job_id):
+        with self._conn() as conn:
+            cur = conn.execute(
+                "SELECT order_idx FROM jobs WHERE id=? AND status=?",
+                (job_id, JobStatus.QUEUED)
+            ).fetchone()
+            if not cur:
+                return
+            idx = cur[0]
+            prev = conn.execute(
+                "SELECT id, order_idx FROM jobs WHERE status=? AND order_idx < ? ORDER BY order_idx DESC LIMIT 1",
+                (JobStatus.QUEUED, idx)
+            ).fetchone()
+            if prev:
+                conn.execute("UPDATE jobs SET order_idx=? WHERE id=?", (prev[1], job_id))
+                conn.execute("UPDATE jobs SET order_idx=? WHERE id=?", (idx, prev[0]))
+
+    def move_job_down(self, job_id):
+        with self._conn() as conn:
+            cur = conn.execute(
+                "SELECT order_idx FROM jobs WHERE id=? AND status=?",
+                (job_id, JobStatus.QUEUED)
+            ).fetchone()
+            if not cur:
+                return
+            idx = cur[0]
+            nxt = conn.execute(
+                "SELECT id, order_idx FROM jobs WHERE status=? AND order_idx > ? ORDER BY order_idx ASC LIMIT 1",
+                (JobStatus.QUEUED, idx)
+            ).fetchone()
+            if nxt:
+                conn.execute("UPDATE jobs SET order_idx=? WHERE id=?", (nxt[1], job_id))
+                conn.execute("UPDATE jobs SET order_idx=? WHERE id=?", (idx, nxt[0]))
 
     def list_jobs(self, status_filter=None, limit=20) -> list:
         with self._conn() as conn:
@@ -128,7 +177,7 @@ class JobQueue:
     def next_queued(self) -> dict:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT * FROM jobs WHERE status=? ORDER BY created_at ASC LIMIT 1",
+                "SELECT * FROM jobs WHERE status=? ORDER BY order_idx ASC LIMIT 1",
                 (JobStatus.QUEUED,)
             ).fetchone()
         return dict(row) if row else None

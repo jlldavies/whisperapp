@@ -3,6 +3,26 @@ import os
 import sys
 import threading
 import webbrowser
+
+# Windows: route Python's ssl through the Windows certificate store. This
+# fixes two problems in one go: (a) Python's bundled OpenSSL points at
+# non-existent /Common Files/SSL/ paths so vanilla HTTPS fails, and (b) TLS
+# inspectors like Norton/corporate proxies replace cert chains with their own
+# roots, which are trusted by Windows but not by certifi. Must run before
+# anything imports requests/urllib3/ssl.
+if sys.platform == "win32":
+    try:
+        import truststore
+        truststore.inject_into_ssl()
+    except ImportError:
+        try:
+            import certifi
+            os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+            os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
+            os.environ.setdefault("CURL_CA_BUNDLE", certifi.where())
+        except ImportError:
+            pass
+
 import uvicorn
 from pathlib import Path
 from whisperapp.config import Config, _config_dir
@@ -53,9 +73,11 @@ def main():
         webbrowser.open("http://127.0.0.1:7860")
         sys.exit(0)
 
-    threading.Thread(target=run_update, daemon=True).start()
-
     cfg = Config()
+    # Background WhisperX/pyannote update check on launch — opt-out via the
+    # Settings → Startup page (cfg.auto_update).
+    if getattr(cfg, "auto_update", True):
+        threading.Thread(target=run_update, daemon=True).start()
     queue = JobQueue()
     worker = Worker(queue=queue, hf_token=cfg.hf_token)
     worker.start()

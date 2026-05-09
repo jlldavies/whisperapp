@@ -102,29 +102,33 @@ export function initTranscribe(container) {
         </div>
       </div>
 
-      <!-- Right: queue -->
+      <!-- Right: processing + queue -->
       <div style="display:flex;flex-direction:column;gap:20px">
+        <!-- Processing card -->
+        <div class="wa-card" id="processing-card">
+          <div class="wa-card-head">
+            <div class="wa-card-title">Processing</div>
+            <button class="wa-btn" id="pause-btn" style="height:26px;font-size:11.5px;padding:0 10px">Pause</button>
+          </div>
+          <div id="processing-list">
+            <div style="color:var(--ink-4);font-size:12.5px">Idle — nothing processing.</div>
+          </div>
+        </div>
+
+        <!-- Queue card -->
         <div class="wa-card">
           <div class="wa-card-head">
             <div class="wa-card-title">Queue</div>
             <div class="wa-card-sub" id="queue-sub">—</div>
           </div>
-          <div id="queue-list" style="display:flex;flex-direction:column;gap:10px">
-            <div style="color:var(--ink-4);font-size:12.5px">No jobs yet.</div>
+          <div id="queue-list" style="display:flex;flex-direction:column;gap:8px">
+            <div style="color:var(--ink-4);font-size:12.5px">No jobs queued.</div>
           </div>
+          <div id="history-list" style="display:flex;flex-direction:column;gap:6px"></div>
           <div style="display:flex;gap:8px;margin-top:16px;padding-top:16px;border-top:1px solid var(--rule)">
             <button class="wa-btn wa-btn-primary" id="add-btn" style="flex:1">Add to queue</button>
-            <button class="wa-btn" id="clear-btn">Clear done</button>
+            <button class="wa-btn" id="clear-btn">Clear history</button>
           </div>
-        </div>
-        <div class="wa-card" style="background:var(--paper-2)">
-          <div class="wa-card-head" style="margin-bottom:8px">
-            <div class="wa-card-title">Tip</div>
-            <div class="wa-card-sub">⌘K</div>
-          </div>
-          <p style="font-size:12.5px;color:var(--ink-2);line-height:1.5">
-            Drop a folder to queue every audio file inside it. Right-click an item to re-run with a different model.
-          </p>
         </div>
       </div>
     </div>
@@ -191,6 +195,16 @@ export function initTranscribe(container) {
   // Add to queue
   container.querySelector('#add-btn').addEventListener('click', async () => {
     if (!selectedFile) { alert('Select a file first.'); return; }
+
+    // Check: emotion enabled but no models configured
+    try {
+      const cfg = await api.getConfig();
+      if (cfg.emotion_enabled && (!cfg.emotion_model_ids || cfg.emotion_model_ids.length === 0)) {
+        alert('Emotion detection is on but no models are enabled. Go to Settings → Emotion Models to download one first.');
+        return;
+      }
+    } catch { /* server may not be ready, continue anyway */ }
+
     const btn = container.querySelector('#add-btn');
     btn.disabled = true;
     btn.textContent = 'Adding…';
@@ -221,8 +235,32 @@ export function initTranscribe(container) {
     }
   });
 
-  // Clear done
-  container.querySelector('#clear-btn').addEventListener('click', () => refreshQueue());
+  // Clear history
+  container.querySelector('#clear-btn').addEventListener('click', async () => {
+    await api.clearJobs().catch(() => {});
+    refreshQueue();
+  });
+
+  // Pause/resume
+  container.querySelector('#pause-btn').addEventListener('click', async () => {
+    const btn = container.querySelector('#pause-btn');
+    const paused = btn.dataset.paused === 'true';
+    if (paused) {
+      await api.resumeWorker().catch(() => {});
+      btn.dataset.paused = 'false';
+      btn.textContent = 'Pause';
+    } else {
+      await api.pauseWorker().catch(() => {});
+      btn.dataset.paused = 'true';
+      btn.textContent = 'Resume';
+    }
+  });
+
+  // Sync initial pause state
+  api.workerStatus().then(s => {
+    const btn = container.querySelector('#pause-btn');
+    if (btn && s.paused) { btn.dataset.paused = 'true'; btn.textContent = 'Resume'; }
+  }).catch(() => {});
 
   // Poll queue
   refreshQueue();
@@ -231,41 +269,138 @@ export function initTranscribe(container) {
 
 async function refreshQueue() {
   let jobs;
-  try { jobs = await api.listJobs(); } catch { return; }
-  const list = document.getElementById('queue-list');
-  const sub  = document.getElementById('queue-sub');
-  if (!list) return;
+  try { jobs = await api.listJobs({ limit: 50 }); } catch { return; }
+  const processingList = document.getElementById('processing-list');
+  const queueList      = document.getElementById('queue-list');
+  const historyList    = document.getElementById('history-list');
+  const sub            = document.getElementById('queue-sub');
+  if (!queueList) return;
 
-  const active = jobs.filter(j => j.status === 'running').length;
-  sub.textContent = jobs.length ? `${jobs.length} · ${active} active` : '—';
+  const running  = jobs.filter(j => j.status === 'running' || j.status === 'speaker_review');
+  const queued   = jobs.filter(j => j.status === 'queued')
+                       .sort((a, b) => a.order_idx - b.order_idx);
+  const history  = jobs.filter(j => ['done','failed','cancelled'].includes(j.status));
 
-  if (!jobs.length) {
-    list.innerHTML = `<div style="color:var(--ink-4);font-size:12.5px">No jobs yet.</div>`;
-    return;
+  // Processing card
+  if (processingList) {
+    processingList.innerHTML = running.length
+      ? running.map(j => renderRunningItem(j)).join('')
+      : `<div style="color:var(--ink-4);font-size:12.5px">Idle — nothing processing.</div>`;
   }
-  list.innerHTML = jobs.map(j => renderQueueItem(j)).join('');
+
+  // Queue card
+  sub.textContent = queued.length ? `${queued.length} waiting` : '—';
+  queueList.innerHTML = queued.length
+    ? queued.map((j, i) => renderQueuedItem(j, i === 0, i === queued.length - 1)).join('')
+    : `<div style="color:var(--ink-4);font-size:12.5px">No jobs queued.</div>`;
+
+  // History
+  if (historyList) {
+    historyList.innerHTML = history.length
+      ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--rule);display:flex;flex-direction:column;gap:6px">${
+          history.map(j => renderHistoryItem(j)).join('')
+        }</div>`
+      : '';
+  }
+
+  // Wire up speaker-review deep-link badges in the Processing card
+  if (processingList) {
+    processingList.querySelectorAll('[data-review]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const jobId = btn.dataset.review;
+        // Tell the speakers screen which job to open, then navigate.
+        window.dispatchEvent(new CustomEvent('wa-open-speaker-review', { detail: { jobId } }));
+        location.hash = 'speakers';
+      });
+    });
+  }
+
+  // Wire up queue reorder + delete buttons
+  queueList.querySelectorAll('[data-move-up]').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      await api.moveJobUp(btn.dataset.moveUp).catch(() => {});
+      refreshQueue();
+    });
+  });
+  queueList.querySelectorAll('[data-move-down]').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      await api.moveJobDown(btn.dataset.moveDown).catch(() => {});
+      refreshQueue();
+    });
+  });
+  queueList.querySelectorAll('[data-delete]').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      await api.deleteJob(btn.dataset.delete).catch(() => {});
+      refreshQueue();
+    });
+  });
+  if (historyList) {
+    historyList.querySelectorAll('[data-delete]').forEach(btn => {
+      btn.addEventListener('click', async e => {
+        e.stopPropagation();
+        await api.deleteJob(btn.dataset.delete).catch(() => {});
+        refreshQueue();
+      });
+    });
+  }
 }
 
-function renderQueueItem(j) {
+function renderRunningItem(j) {
   const pct = j.progress ?? 0;
   const stage = j.stage || j.status;
+  // When the worker has stopped on `speaker_review`, the badge becomes a
+  // deep-link button so the user can hop straight to that job's review pane.
+  const badge = j.status === 'speaker_review'
+    ? `<button class="queue-badge queue-badge-link" data-review="${j.id}" title="Open speaker review">${j.status} ▸</button>`
+    : `<span class="queue-badge">${j.status}</span>`;
   return `
-    <div class="queue-item ${j.status}">
+    <div class="queue-item running" data-job-id="${j.id}">
       <div class="queue-item-header">
-        <span class="queue-dot ${j.status}"></span>
+        <span class="queue-dot running"></span>
         <span class="queue-item-title">${escHtml(j.file_name || j.file_path)}</span>
-        <span class="queue-badge">${j.status}</span>
+        ${badge}
       </div>
       <div class="queue-meta mono">${j.model}${j.diarize ? ' · diarize' : ''}</div>
-      ${j.status === 'running' ? `
-        <div class="queue-progress">
-          <div class="queue-progress-bar"><div class="queue-progress-fill" style="width:${pct}%"></div></div>
-          <div class="queue-progress-meta mono">
-            <span>${escHtml(stage)}</span><span>${pct}%</span>
-          </div>
-        </div>` : ''}
-    </div>
-  `;
+      <div class="queue-progress">
+        <div class="queue-progress-bar"><div class="queue-progress-fill" style="width:${pct}%"></div></div>
+        <div class="queue-progress-meta mono">
+          <span>${escHtml(stage)}</span><span>${pct}%</span>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderQueuedItem(j, isFirst, isLast) {
+  return `
+    <div class="queue-item queued" data-job-id="${j.id}">
+      <div class="queue-item-header">
+        <div class="queue-reorder-col">
+          <button class="queue-reorder-btn" data-move-up="${j.id}" ${isFirst ? 'disabled' : ''} title="Move up">▲</button>
+          <button class="queue-reorder-btn" data-move-down="${j.id}" ${isLast ? 'disabled' : ''} title="Move down">▼</button>
+        </div>
+        <span class="queue-dot queued"></span>
+        <span class="queue-item-title">${escHtml(j.file_name || j.file_path)}</span>
+        <span class="queue-badge">queued</span>
+        <button class="queue-remove-btn" data-delete="${j.id}" title="Remove">✕</button>
+      </div>
+      <div class="queue-meta mono" style="padding-left:28px">${j.model}${j.diarize ? ' · diarize' : ''}</div>
+    </div>`;
+}
+
+function renderHistoryItem(j) {
+  const icon = j.status === 'done' ? '✓' : j.status === 'failed' ? '✗' : '—';
+  const color = j.status === 'done' ? 'var(--signal-ok)' : j.status === 'failed' ? 'var(--signal-rec)' : 'var(--ink-4)';
+  return `
+    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3)">
+      <span style="color:${color};font-size:11px;width:12px;text-align:center;flex-shrink:0">${icon}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(j.file_name || j.file_path)}</span>
+      <span class="mono" style="color:var(--ink-4);font-size:10.5px">${j.status}</span>
+      <button class="queue-remove-btn" data-delete="${j.id}" title="Remove" style="font-size:10px">✕</button>
+    </div>`;
 }
 
 function escHtml(s) {

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.10+, WhisperX, pyannote.audio, Gradio, FastAPI, SQLite (via `sqlite3`), pystray, bleach, pytest, httpx (test client)
 
-**HuggingFace token for tests:** `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`
+**HuggingFace token for tests:** set `HF_TOKEN` env var (see COMMS.md or your ~/.whisperapp/config.json)
 **Config location:** `~/.whisperapp/config.json`
 **Partials location:** `<output_path>/.whisperapp_partials/<job_id>/`
 
@@ -1933,8 +1933,7 @@ from whisperapp.queue import JobQueue, JobStatus
 from whisperapp.worker import Worker
 from whisperapp.config import Config
 
-HF_TOKEN = os.environ.get(
-    "HF_TOKEN", "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")
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
 TEST_AUDIO = Path(__file__).parent / "fixtures" / "test_5sec.wav"
 
 @pytest.mark.integration

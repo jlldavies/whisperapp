@@ -1,10 +1,13 @@
 import { LOGO_SVG, NAV_ICONS } from './marks.js';
 
+const IS_MAC = /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
+const MOD = IS_MAC ? '⌘' : 'Ctrl+';
+
 const NAV_ITEMS = [
-  { id: 'transcribe', label: 'Transcribe', kbd: '⌘1' },
-  { id: 'live',       label: 'Live',       kbd: '⌘2' },
-  { id: 'speakers',   label: 'Speakers',   kbd: '⌘3' },
-  { id: 'settings',   label: 'Settings',   kbd: '⌘,' },
+  { id: 'transcribe', label: 'Transcribe', kbd: `${MOD}1` },
+  { id: 'live',       label: 'Live',       kbd: `${MOD}2` },
+  { id: 'speakers',   label: 'Speakers',   kbd: `${MOD}3` },
+  { id: 'settings',   label: 'Settings',   kbd: `${MOD},` },
 ];
 
 export function renderSidebar(container, activeId, onNavigate) {
@@ -52,12 +55,26 @@ export function renderSidebar(container, activeId, onNavigate) {
         <span style="color:var(--ink-4)">GPU</span>
         <span>—</span>
       </div>
+      <div class="wa-status-row" style="margin-top:4px;padding-top:6px;border-top:1px solid var(--rule)">
+        <span style="color:var(--ink-4)">Theme</span>
+        <button id="theme-toggle" title="Toggle theme">◑</button>
+      </div>
     </div>
   `;
 
   container.querySelectorAll('[data-nav]').forEach(el => {
     el.addEventListener('click', () => onNavigate(el.dataset.nav));
   });
+
+  const themeBtn = container.querySelector('#theme-toggle');
+  if (themeBtn) {
+    themeBtn.addEventListener('click', () => {
+      const html = document.documentElement;
+      const next = html.dataset.theme === 'dark' ? 'light' : 'dark';
+      html.dataset.theme = next;
+      localStorage.setItem('wa-theme', next);
+    });
+  }
 
   // Fetch /info to populate GPU row
   fetch('http://127.0.0.1:7861/info')

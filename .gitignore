@@ -1,17 +1,34 @@
-# Virtual environment
+# Virtual environments
 .venv/
 venv/
 env/
+ENV/
+.python-version
 
-# Python
+# Python bytecode + caches
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+*.dylib
+*.pyd
+
+# Build / packaging artefacts (pip / setuptools / build / wheel)
 *.egg-info/
+*.dist-info/
 *.egg
+.eggs/
 dist/
 build/
-.eggs/
+sdist/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+
+# pip / venv temp folders that crop up during install
+pip-*-build/
+pip-tmp/
+.installed.cfg
 
 # IDE
 .vscode/
@@ -19,15 +36,42 @@ build/
 *.swp
 *.swo
 
-# Test
+# Test / lint caches
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
 .coverage
+.coverage.*
 htmlcov/
+nosetests.xml
+coverage.xml
 
-# OS
+# OS-specific cruft (Mac and Windows)
 .DS_Store
+.AppleDouble
+.LSOverride
+__MACOSX/
+._*
 Thumbs.db
+ehthumbs.db
+Desktop.ini
 desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Session debris — anything starting with `_` plus an extension. The two
+# tracked utility scripts (`_headless_launch.py`, `_launch_nosync.py`) are
+# already in the repo so this glob doesn't kick them out, but it does keep
+# ad-hoc `_tray_*.png`, `_daemon.log`, etc. from being committed.
+_*.png
+_*.bin
+_*.log
+_*.log.*
+_*.tmp
+_iconsnap*
+_tray_*.py
 
 # WhisperApp runtime
 *.db
@@ -38,8 +82,17 @@ desktop.ini
 *.tmp.*
 worker.py.tmp.*
 
-# Claude Code machine-local settings
+# Claude Code machine-local settings and superpowers plugin files
 .claude/settings.local.json
+.claude/launch.json
+docs/superpowers/
+
+# Design reference files (Dropbox-synced separately)
+Design/
+
+# Cross-machine coordination file — synced via Dropbox between Mac and Windows.
+# May contain secrets (API keys etc.) that must NEVER reach GitHub.
+COMMS.md
 
 # whisper_webui outputs and downloaded models
 whisper_webui/outputs/

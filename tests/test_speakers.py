@@ -15,7 +15,10 @@ def test_extracts_snippets_per_speaker():
     assert "SPEAKER_00" in snippets
     assert "SPEAKER_01" in snippets
     assert len(snippets["SPEAKER_00"]) <= 3
-    assert snippets["SPEAKER_00"][0] == "Hello world"
+    first = snippets["SPEAKER_00"][0]
+    assert first["text"] == "Hello world"
+    assert first["start"] == 0.0
+    assert first["end"] == 5.0
 
 def test_apply_speaker_names():
     names = {"SPEAKER_00": "James", "SPEAKER_01": "Wolfgang"}
