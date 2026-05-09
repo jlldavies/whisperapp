@@ -4,7 +4,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
-PACKAGES = ["whisperx", "pyannote.audio", "gradio", "fastapi"]
+PACKAGES = ["whisperx", "pyannote.audio", "fastapi"]
 
 def run_update():
     """Silently upgrade key packages. Fails gracefully."""

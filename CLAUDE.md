@@ -47,5 +47,5 @@ brew install portaudio
 - CUDA on Windows/Linux: detected automatically, uses float16
 
 ## Ports
-- Gradio UI: http://127.0.0.1:7860
+- Web UI: http://127.0.0.1:7860
 - REST API / health: http://127.0.0.1:7861

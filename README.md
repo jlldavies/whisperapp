@@ -1,133 +1,117 @@
 # WhisperApp
 
-Local audio and video transcription with speaker diarization, acoustic analysis, emotion detection, and live microphone streaming. Powered by [WhisperX](https://github.com/m-bain/whisperX). Runs as a persistent background app with a modern web UI, REST API, CLI, and system tray icon.
+**Local, private transcription for people who deal with a lot of audio.** Drop a folder of recordings, a day's worth of meetings, or hours of interview audio — WhisperApp queues them, processes them in the background, and gives you clean transcripts with speaker names, timestamps, and optional AI annotations. Nothing leaves your machine.
+
+Built on [WhisperX](https://github.com/m-bain/whisperX). Runs as a background app on macOS and Windows with a web UI, full REST API, CLI, and system tray icon. Mix and match — use the UI for review, the CLI for automation, the API for integrations.
+
+---
+
+## What it's good for
+
+- **Batch transcription** — queue dozens of files, walk away. SQLite-backed job queue with checkpoint recovery so crashes don't lose progress.
+- **Meeting capture** — live microphone recording with real-time transcript, speaker detection, and automatic output to your format of choice.
+- **Research and interviews** — speaker diarization identifies who said what; label speakers by name before saving. Output goes to TXT, SRT, VTT, JSON, or TSV.
+- **AI-augmented review** — connect Claude, OpenAI, or local Ollama to get automatic speaker identification, meeting notes, and emotion analysis alongside the raw transcript.
+- **Automation** — full REST API and CLI mean you can trigger transcription from scripts, integrate with other tools, or wire it into an MCP workflow.
 
 ---
 
 ## Screenshots
 
-### Transcribe — submit files, manage the queue, review history
+### Transcribe — drop files, configure the pipeline, manage the queue
 ![Transcribe screen](docs/screenshots/transcribe.png)
 
-### Live — real-time mic streaming with VAD and pause markers
+### Live — real-time mic streaming with waveform, VAD, and session stats
 ![Live screen](docs/screenshots/live.png)
 
-### Speakers — review snippets and label each speaker before saving
+### Speakers — awaiting review after a diarized job completes
 ![Speakers screen](docs/screenshots/speakers.png)
 
-### Settings — full configuration including model management
+### Settings — full configuration including pause detection thresholds
 ![Settings screen](docs/screenshots/settings.png)
-
-> Screenshots live at `docs/screenshots/`. Run the app and capture your own.
 
 ---
 
 ## Features
 
-### Transcription
-- **WhisperX** word-level alignment — precise timestamps on every word
-- **10+ model sizes** — `tiny`, `base`, `small`, `medium`, `large-v2`, `large-v3`, `turbo`, and more
-- **Multiple output formats** — TXT, SRT, VTT, JSON, TSV
-- **Batch job queue** — submit multiple files; they process in order with SQLite persistence
-- **Queue management** — reorder jobs (▲▼), delete individual items, pause and resume the processing worker
-- **Checkpoint recovery** — jobs resume from the last completed stage after a crash or restart
+### Batch transcription & queue
+- **10+ Whisper model sizes** — `tiny` through `large-v3` and `turbo`; Apple Silicon auto-uses MLX for fast on-device inference
+- **Queue with priority control** — reorder jobs, delete items, pause and resume the worker to reclaim CPU
+- **Checkpoint recovery** — each job saves progress through stages; a crash picks back up where it left off
+- **Formats** — TXT, SRT, VTT, JSON, TSV — all generated simultaneously from the same aligned data
 
-### Speaker Diarization
-- **pyannote.audio** — identifies who is speaking and when
-- **Speaker labelling UI** — listen to snippets, then assign names before saving
-- **Diarized outputs** — all formats include `[Speaker Name]:` prefixes when diarization is run
+### Speaker diarization
+- **pyannote.audio** — identifies each speaker's turns throughout the recording
+- **Review UI** — listen to representative snippets per speaker, type the name, save
+- **Diarized output** — every format gets `[Speaker Name]:` prefixes, timestamps align to the word
 
-### Live Transcription
-- **Real-time streaming** — faster-whisper + Silero VAD for sub-second latency
-- **Device selection** — choose any microphone from the UI
-- **Input level meter** — visualise and check levels before recording
-- **Auto-worker-pause** — Live recording pauses the transcription worker to free CPU; resumes on stop
-- **Save on stop** — transcript saved to your chosen output formats automatically
+### Live transcription
+- **Real-time streaming** with sub-second latency (faster-whisper + Silero VAD)
+- **Any microphone** — pick from detected devices, check input levels before you start
+- **Auto-pauses batch queue** when recording starts, resumes it when you stop — no CPU contention
+- **Polish** — after stopping, run full WhisperX alignment + diarization on the recorded session
 
-### Pause Detection
-Three configurable tiers injected inline in all text-based output formats:
+### Transcript annotations
+Injected inline so every output format gets the same enriched content:
 
-| Marker | Default trigger | Example |
-|--------|----------------|---------|
+**Pause detection** — three configurable silence tiers:
+
+| Marker | Default | Example output |
+|--------|---------|----------------|
 | `[Pause, N seconds]` | ≥ 3 s | `[Pause, 4 seconds]` |
 | `[Long Pause, N seconds]` | ≥ 10 s | `[Long Pause, 15 seconds]` |
-| `[Gap, N minutes]` | ≥ 30 s | `[Gap, 2 minutes]` |
+| `[Gap, N minutes]` | ≥ 30 s | `[Gap, 2 minutes 10 seconds]` |
 
-Only the deepest tier fires — a 45-second gap is labelled Gap, not also Long Pause.
-All thresholds are configurable in Settings → Transcription.
+**Acoustic analysis** (optional, librosa-based):
 
-### Acoustic Analysis
-Optional librosa-based analysis that annotates each segment with speaking characteristics:
+| Marker | What it means |
+|--------|--------------|
+| `[Loud]` / `[Quiet]` | Volume relative to speaker baseline |
+| `[Raised voice]` / `[Animated]` | Elevated pitch variance |
+| `[Rapid]` / `[Slow]` | Speaking rate outside normal range |
 
-| Marker | Meaning |
-|--------|---------|
-| `[Loud]` | RMS energy significantly above baseline |
-| `[Quiet]` | RMS energy significantly below baseline |
-| `[Raised voice]` | High pitch variance (F0 std dev) |
-| `[Animated]` | Moderately elevated pitch variance |
-| `[Rapid]` | > 180 words per minute |
-| `[Slow]` | < 90 words per minute |
+**Emotion detection** (optional, HuggingFace SER models):
 
-All markers are individually toggleable. Thresholds for volume ratio, pitch std dev, and WPM are configurable.
-Enable in Settings → AI features → Acoustic analysis.
+| Model | Type |
+|-------|------|
+| SpeechBrain IEMOCAP | 4-class: Happy / Sad / Angry / Neutral |
+| WavLM multi-class | 9-class emotion |
+| wav2vec2-8emotion | 8-class, RAVDESS fine-tuned |
+| audeering dimensional | Continuous arousal + valence |
 
-### Emotion Detection
-Optional Speech Emotion Recognition using HuggingFace models:
+Run multiple models: unanimous → label kept, split → highest confidence wins.
 
-| Model | Type | Description |
-|-------|------|-------------|
-| `speechbrain-iemocap` | Classification | Happy / Sad / Angry / Neutral (SpeechBrain) |
-| `wavlm-multi` | Classification | 9-class emotion from WavLM |
-| `wav2vec2-8emotion` | Classification | 8-class from wav2vec2 fine-tuned on RAVDESS |
-| `audeering-dimensional` | Dimensional | Continuous arousal + valence from audeering |
-
-- Run one or multiple models simultaneously
-- Classification models: unanimous agreement → label kept; split → highest confidence wins
-- Dimensional model adds `[intense]` (arousal > 0.7) and `[negative tone]` (valence < 0.3)
-- Optional AI synthesis — if an AI provider is configured, it can combine model outputs into a narrative annotation
-- Models are downloaded on demand from HuggingFace; manage them in Settings → Models
-
-### Model Management
-Unified model registry for all five model categories:
-
-| Category | What it controls |
-|----------|-----------------|
-| Transcription | Whisper model variants |
-| Streaming | faster-whisper models for Live mode |
-| Alignment | phoneme alignment models per language |
-| Diarization | pyannote speaker diarization |
-| Emotion | SER models (download / delete / status) |
-
-Settings → Models shows disk usage per category, download progress bars, and lets you activate, deactivate, update, or delete any model.
-
-### AI Integration
-Optional LLM features (requires an AI provider in Settings → AI features):
+### AI integration
+Connect an LLM to unlock AI-assisted review (no AI required for core transcription):
 
 | Feature | What it does |
 |---------|-------------|
-| Identify speakers | Uses transcript + audio snippets to suggest speaker names and roles |
-| Meeting notes | Summarises the transcript into structured notes |
-| Emotion synthesis | Combines outputs from multiple emotion models into a narrative |
+| Identify speakers | Reads the transcript, suggests names + role from conversational cues |
+| Meeting notes | Structured summary with action items |
+| Emotion synthesis | Narrative annotation combining SER model outputs |
 
-Supported providers: **Claude** (Anthropic), **OpenAI**, **Ollama** (local).
+Providers: **Claude** (Anthropic), **OpenAI**, **Ollama** (local, no API key needed).
+
+### REST API & CLI
+Everything in the UI is also available via API (port 7861) and CLI — useful for scripting batch imports, polling job status, or integrating with other tools. Interactive API docs at `http://127.0.0.1:7861/docs` when running.
 
 ---
 
-## Quick Start
+## Quick start
 
-### macOS (Apple Silicon / Intel)
+### macOS
 
 ```zsh
 git clone --recurse-submodules https://github.com/jlldavies/whisperapp.git
 cd whisperapp
 
 brew install portaudio
-/opt/homebrew/bin/python3.13 -m venv .venv
+python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m whisperapp
 ```
 
-Apple Silicon uses `mlx-whisper` automatically for fast on-device transcription.
+Apple Silicon (M1/M2/M3/M4): `mlx-whisper` installs automatically — no CUDA needed, fast Metal inference.
 
 ### Windows
 
@@ -141,194 +125,41 @@ pip install -e ".[dev]"
 python -m whisperapp
 ```
 
-NVIDIA GPU is detected and used automatically (float16). SSL certificates are routed through the Windows certificate store via `truststore` — this handles corporate proxies and antivirus CA injection automatically.
+NVIDIA GPU auto-detected and used (float16). SSL certificates route through the Windows cert store — works through corporate proxies and AV tools without manual configuration.
 
 ### First run
 
-1. The app starts in the system tray and opens http://127.0.0.1:7860
-2. Open **Settings → API & CLI**
-3. Enter your HuggingFace token (required for speaker diarization and some model downloads)
-4. Optionally configure an AI provider for speaker identification, meeting notes, and emotion synthesis
-
----
-
-## Architecture
-
-```
-whisperapp/
-├── __main__.py          Entry point — launches all services
-├── config.py            Config manager (~/.whisperapp/config.json)
-├── sanitise.py          Input validation
-├── queue.py             SQLite job queue with ordering and status tracking
-├── checkpoints.py       Per-job crash-recovery checkpoints
-├── worker.py            WhisperX processing pipeline (pause/resume support)
-├── formatters.py        Output writers (txt/srt/vtt/json/tsv)
-├── pauses.py            Pause detection and inline marker injection
-├── acoustic.py          librosa-based acoustic feature analysis
-├── emotion.py           Speech emotion recognition pipeline
-├── emotion_registry.py  SER model registry and HuggingFace download manager
-├── model_registry.py    Unified model catalogue (all 5 categories)
-├── metadata.py          Job metadata extraction (duration, codec, etc.)
-├── speakers.py          Speaker snippet extraction and renaming
-├── streaming.py         Real-time streaming engine (faster-whisper + Silero VAD)
-├── ai.py                AI provider abstraction (Claude / OpenAI / Ollama)
-├── server.py            FastAPI REST/MCP server (port 7861)
-├── tray.py              System tray icon (pystray)
-├── cli.py               Click CLI commands
-├── updater.py           Auto-updater for WhisperX and pyannote
-├── startup.py           OS startup (login item) registration
-└── static/
-    ├── index.html
-    ├── css/
-    │   ├── tokens.css   Design tokens (colours, spacing, radii)
-    │   └── app.css      Component styles
-    └── js/
-        ├── app.js       Router and keyboard shortcuts
-        ├── shell.js     Sidebar, waveform, top bar components
-        ├── transcribe.js Transcribe screen (queue, history, job detail)
-        ├── live.js      Live screen (mic streaming, real-time transcript)
-        ├── speakers.js  Speaker review screen
-        ├── settings.js  Settings screen (all panels including Models)
-        ├── api.js       Typed API client
-        └── marks.js     SVG icons
-```
-
-### Processing pipeline
-
-Each transcription job passes through stages:
-
-```
-QUEUED → EXTRACTING_AUDIO → TRANSCRIBING → ALIGNING → DIARIZING
-       → SPEAKER_REVIEW (if diarize) → SAVING → DONE
-```
-
-Optional enrichment (run before SAVING):
-- Pause markers inserted from word-level timestamps
-- Acoustic markers added per segment via librosa
-- Emotion labels added per segment via SER models
-
-All enrichment is injected before the formatters run, so every output format (txt, srt, vtt) receives the same annotated content.
-
-### Streaming pipeline
-
-```
-Microphone → getUserMedia (16 kHz PCM) → base64 chunk → POST /stream/chunk
-           → faster-whisper VAD → segment detection → partial / committed text
-```
-
-Live mode auto-pauses the transcription worker when recording starts and resumes it when recording stops, preventing CPU contention between real-time and batch processing.
-
----
-
-## REST API
-
-Full REST API on `127.0.0.1:7861` — local-only. Interactive docs at http://127.0.0.1:7861/docs
-
-### Jobs
-
-```bash
-GET    /jobs                   List all jobs
-POST   /jobs                   Submit a new transcription job
-GET    /jobs/{id}              Get job status and result
-DELETE /jobs/{id}              Permanently delete a job
-POST   /jobs/{id}/cancel       Cancel a queued or running job
-POST   /jobs/{id}/move-up      Move job up in queue
-POST   /jobs/{id}/move-down    Move job down in queue
-GET    /jobs/{id}/transcript   Get transcript text (?format=txt|srt|vtt)
-```
-
-### Worker
-
-```bash
-GET    /worker/status          Worker running / paused state
-POST   /worker/pause           Pause batch processing
-POST   /worker/resume          Resume batch processing
-```
-
-### Live streaming
-
-```bash
-POST   /stream/start           Start a streaming session → {session_id}
-POST   /stream/chunk           Send audio chunk (base64 PCM) → {new_text, partial}
-POST   /stream/stop            Stop and save → {text, segments}
-POST   /stream/polish          Run full WhisperX alignment + diarize on session audio
-```
-
-### Speakers
-
-```bash
-GET    /speakers/{id}          Get speaker snippets for review
-POST   /speakers/{id}/label    Save speaker name mappings
-POST   /speakers/{id}/identify AI-suggest speaker identities
-POST   /speakers/{id}/notes    Generate meeting notes
-```
-
-### Models
-
-```bash
-GET    /models                 List downloaded models
-GET    /models/catalogue       Full model catalogue with status
-GET    /models/disk-summary    Disk usage by category
-POST   /models/{id}/download   Start background model download
-DELETE /models/{id}            Delete a model
-POST   /models/{id}/activate   Set as active model for its category
-POST   /models/{id}/update     Update to latest version
-POST   /models/check-updates   Check all models for available updates
-POST   /models/add-custom      Register a custom HuggingFace model
-```
-
-### Config & system
-
-```bash
-GET    /config                 Read current configuration
-POST   /config                 Update configuration fields
-GET    /info                   App version and hardware acceleration
-POST   /storage/reveal         Open ~/.whisperapp in Finder/Explorer
-```
-
-### Example: submit and wait
-
-```bash
-# Submit
-curl -X POST http://127.0.0.1:7861/jobs \
-  -H "Content-Type: application/json" \
-  -d '{"file_path": "/path/to/audio.mp3", "model": "large-v2", "diarize": true}'
-
-# Poll
-curl http://127.0.0.1:7861/jobs/<job-id>
-
-# Get transcript
-curl "http://127.0.0.1:7861/jobs/<job-id>/transcript?format=srt"
-```
+1. App starts in the system tray and opens **http://127.0.0.1:7860**
+2. Go to **Settings → Transcription** and enter your [HuggingFace token](https://huggingface.co/settings/tokens) — required for speaker diarization (free account)
+3. Drop a file on the **Transcribe** screen or hit **Live** to start recording
 
 ---
 
 ## CLI
 
 ```bash
-# Transcription
-whisperapp transcribe recording.mp3
-whisperapp transcribe recording.mp3 -m large-v2 --diarize --formats srt,vtt,txt
+# Submit files
+whisperapp transcribe interview.mp3
+whisperapp transcribe meeting.mp4 -m large-v2 --diarize --formats srt,txt,vtt
 
-# Queue management
+# Manage the queue
 whisperapp list
-whisperapp list --status queued
 whisperapp status <job-id>
 whisperapp cancel <job-id>
 whisperapp delete <job-id>
 whisperapp move-up <job-id>
 whisperapp move-down <job-id>
 
-# Worker control
-whisperapp worker-status
-whisperapp pause
+# Control the worker
+whisperapp pause          # free up CPU
 whisperapp resume
+whisperapp worker-status
 
-# Transcript access
+# Read transcripts
 whisperapp transcript <job-id>
 whisperapp transcript <job-id> --format srt
 
-# Speaker tools (requires AI provider)
+# AI features (requires provider configured)
 whisperapp identify-speakers <job-id>
 whisperapp meeting-notes <job-id>
 
@@ -337,107 +168,111 @@ whisperapp models
 whisperapp download <model-id>
 whisperapp delete-model <model-id>
 
-# System info
+# System
 whisperapp info
 whisperapp ai-status
 ```
 
 ---
 
-## Configuration reference
+## REST API reference
 
-All settings live at `~/.whisperapp/config.json` — editable via Settings UI, `POST /config`, or directly.
+All endpoints are local-only (`127.0.0.1:7861`). Swagger UI at `/docs`.
+
+```
+GET    /jobs                      List all jobs
+POST   /jobs                      Submit a transcription job
+GET    /jobs/{id}                 Status + result
+DELETE /jobs/{id}                 Delete permanently
+POST   /jobs/{id}/cancel          Cancel
+POST   /jobs/{id}/move-up         Reorder in queue
+POST   /jobs/{id}/move-down       Reorder in queue
+GET    /jobs/{id}/transcript      Get transcript (?format=txt|srt|vtt)
+
+GET    /worker/status             Running or paused
+POST   /worker/pause              Pause batch processing
+POST   /worker/resume             Resume batch processing
+
+POST   /stream/start              Start live session → {session_id}
+POST   /stream/chunk              Send audio chunk (base64 PCM float32)
+POST   /stream/stop               Stop + save → {text, segments}
+POST   /stream/polish             Full alignment + diarize on session audio
+
+GET    /speakers/{id}             Speaker snippets for review
+POST   /speakers/{id}/label       Save name mappings → triggers output write
+POST   /speakers/{id}/identify    AI-suggest speaker names
+POST   /speakers/{id}/notes       Generate meeting notes
+
+GET    /models/catalogue          Full model catalogue with download status
+GET    /models/disk-summary       Disk usage by category
+POST   /models/{id}/download      Start background download
+DELETE /models/{id}               Delete model files
+POST   /models/{id}/activate      Set as active for category
+POST   /models/check-updates      Check all for newer versions
+
+GET    /config                    Read config
+POST   /config                    Update config fields
+GET    /info                      Platform, acceleration backend, versions
+POST   /storage/reveal            Open ~/.whisperapp in Finder/Explorer
+```
+
+---
+
+## Configuration
+
+All settings live at `~/.whisperapp/config.json` — editable via the Settings UI, `POST /config`, or by editing the file directly.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `hf_token` | `""` | HuggingFace access token |
+| `hf_token` | `""` | HuggingFace access token (for diarization) |
 | `default_model` | `"large-v2"` | Whisper model for new jobs |
 | `default_output_path` | `~/Downloads` | Where transcripts are saved |
 | `diarize_by_default` | `true` | Enable diarization for new jobs |
 | `streaming_model` | `"base"` | Whisper model for Live mode |
-| `vad_silence_threshold` | `0.6` | Silero VAD sensitivity |
-| `streaming_max_chunk_sec` | `10.0` | Max audio chunk duration for streaming |
 | `ai_provider` | `"none"` | `none` / `claude` / `openai` / `ollama` |
 | `ai_api_key` | `""` | API key for AI provider |
 | `ai_model` | `""` | Model ID (blank = provider default) |
-| `ai_base_url` | `""` | Ollama or OpenAI-compatible endpoint URL |
-| `auto_update` | `true` | Check for model updates on launch |
-| `pause_detection` | `true` | Insert pause markers in output |
-| `pause_threshold` | `3` | Seconds before `[Pause]` marker |
-| `long_pause_threshold` | `10` | Seconds before `[Long Pause]` marker |
-| `gap_threshold` | `30` | Seconds before `[Gap]` marker |
-| `acoustic_enabled` | `false` | Enable acoustic feature analysis |
-| `acoustic_volume_enabled` | `true` | Volume markers (`[Loud]` / `[Quiet]`) |
+| `ai_base_url` | `""` | Ollama or OpenAI-compatible endpoint |
+| `pause_detection` | `true` | Insert silence markers in output |
+| `pause_threshold` | `3` | Seconds before `[Pause]` |
+| `long_pause_threshold` | `10` | Seconds before `[Long Pause]` |
+| `gap_threshold` | `30` | Seconds before `[Gap]` |
+| `acoustic_enabled` | `false` | Enable acoustic feature markers |
 | `acoustic_volume_threshold` | `1.8` | RMS ratio vs rolling baseline |
-| `acoustic_pitch_enabled` | `true` | Pitch markers (`[Raised voice]` / `[Animated]`) |
-| `acoustic_pitch_threshold` | `40.0` | F0 std dev threshold in Hz |
-| `acoustic_rate_enabled` | `true` | Rate markers (`[Rapid]` / `[Slow]`) |
+| `acoustic_pitch_threshold` | `40.0` | F0 std dev threshold (Hz) |
 | `acoustic_rate_fast_wpm` | `180` | WPM threshold for `[Rapid]` |
 | `acoustic_rate_slow_wpm` | `90` | WPM threshold for `[Slow]` |
-| `emotion_enabled` | `false` | Enable emotion detection |
+| `emotion_enabled` | `false` | Enable SER emotion detection |
 | `emotion_model_ids` | `[]` | Which SER model IDs to run |
-| `emotion_confidence_threshold` | `0.65` | Min confidence to include an emotion label |
-| `emotion_combine_with_ai` | `false` | Use AI provider to synthesise model outputs |
-
----
-
-## Development
-
-### Running tests
-
-```bash
-python -m pytest tests/ -q
-```
-
-Expected: 138 passed, 2 skipped, 0 failed.
-
-Integration tests (require a real HuggingFace token and downloaded models):
-
-```bash
-HF_TOKEN=hf_... pytest tests/test_integration.py -v -m integration
-```
-
-### Test structure
-
-```
-tests/
-├── test_config.py              Config load/save/defaults
-├── test_queue.py               Job queue CRUD and ordering
-├── test_worker.py              Worker lifecycle and pause/resume
-├── test_streaming.py           Streaming engine (mocked WhisperX)
-├── test_formatters.py          Output format correctness
-├── test_pauses.py              Pause marker injection
-├── test_acoustic.py            Acoustic analysis (mocked librosa)
-├── test_emotion_registry.py    SER model registry
-├── test_model_registry.py      Unified model catalogue
-├── test_speakers.py            Speaker snippet extraction
-├── test_server.py              FastAPI endpoint tests
-├── test_ai.py                  AI provider abstraction
-└── test_integration.py         End-to-end (requires HF_TOKEN, @integration)
-```
+| `emotion_confidence_threshold` | `0.65` | Min confidence to include label |
+| `emotion_combine_with_ai` | `false` | AI synthesis of model outputs |
 
 ---
 
 ## Hardware acceleration
 
-| Platform | Backend | Notes |
-|----------|---------|-------|
-| Apple Silicon (M1–M4) | mlx-whisper | Native Metal, installed automatically |
-| NVIDIA CUDA | WhisperX float16 | Detected automatically |
-| CPU fallback | WhisperX int8 | Works everywhere |
+| Platform | Backend | How |
+|----------|---------|-----|
+| Apple Silicon (M1–M4) | mlx-whisper | Auto-installed, Metal GPU |
+| NVIDIA CUDA | WhisperX float16 | Auto-detected |
+| CPU (any platform) | WhisperX int8 | Fallback, always works |
 
-The `GET /info` endpoint reports the active backend.
+`GET /info` reports the active backend.
 
 ---
 
-## Keyboard shortcuts
+## Development
 
-| Action | macOS | Windows / Linux |
-|--------|-------|----------------|
-| Transcribe | ⌘1 | Ctrl+1 |
-| Live | ⌘2 | Ctrl+2 |
-| Speakers | ⌘3 | Ctrl+3 |
-| Settings | ⌘, | Ctrl+, |
+```bash
+# Run the test suite (no GPU or HF token required)
+python -m pytest tests/ -q
+# Expected: 138 passed, 2 skipped
+
+# Integration tests (downloads models, needs HF_TOKEN env var)
+HF_TOKEN=hf_... pytest tests/test_integration.py -v -m integration
+```
+
+Tests cover: config, queue, worker, streaming, formatters, pause markers, acoustic analysis, emotion registry, model catalogue, speakers, server endpoints, and AI provider abstraction.
 
 ---
 
@@ -448,6 +283,24 @@ The `GET /info` endpoint reports the active backend.
 | Web UI | http://127.0.0.1:7860 |
 | REST API | http://127.0.0.1:7861 |
 | Swagger docs | http://127.0.0.1:7861/docs |
+
+## Keyboard shortcuts
+
+| Action | macOS | Windows |
+|--------|-------|---------|
+| Transcribe | ⌘1 | Ctrl+1 |
+| Live | ⌘2 | Ctrl+2 |
+| Speakers | ⌘3 | Ctrl+3 |
+| Settings | ⌘, | Ctrl+, |
+
+---
+
+## Requirements
+
+- Python 3.10+
+- [HuggingFace account](https://huggingface.co) (free — for speaker diarization models)
+- macOS: `brew install portaudio`
+- Windows/Linux: nothing extra for CPU; CUDA toolkit for GPU
 
 ---
 
