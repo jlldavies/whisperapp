@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhisperApp — First Run Setup</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2a2d3a;
+      --accent: #6c7cff;
+      --accent-dim: rgba(108,124,255,0.15);
+      --green: #3ecf8e;
+      --red: #ff5f5f;
+      --amber: #f5a623;
+      --text: #e2e4ef;
+      --muted: #6b7280;
+      --mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 720px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 1.5rem 2rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .logo {
+      width: 36px;
+      height: 36px;
+      background: var(--accent-dim);
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    h1 { font-size: 1.1rem; font-weight: 600; }
+    .subtitle { font-size: 0.82rem; color: var(--muted); margin-top: 2px; }
+
+    .card-body { padding: 1.5rem 2rem; }
+
+    .info-box {
+      background: var(--accent-dim);
+      border: 1px solid rgba(108,124,255,0.3);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.5rem;
+      font-size: 0.875rem;
+      line-height: 1.6;
+    }
+
+    .info-box strong { color: var(--accent); }
+
+    .platform-row {
+      display: flex;
+      gap: 2rem;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    .platform-item { font-size: 0.82rem; }
+    .platform-item .label { color: var(--muted); margin-bottom: 2px; }
+    .platform-item .value { font-weight: 500; }
+
+    .existing-list {
+      margin-bottom: 1.5rem;
+    }
+
+    .existing-list h2 {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+    }
+
+    .pkg-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.875rem;
+    }
+
+    .pkg-row:last-child { border-bottom: none; }
+
+    .pkg-badge {
+      font-size: 0.72rem;
+      font-family: var(--mono);
+      padding: 2px 7px;
+      border-radius: 4px;
+      background: rgba(62,207,142,0.15);
+      color: var(--green);
+      border: 1px solid rgba(62,207,142,0.3);
+    }
+
+    .pkg-badge.missing {
+      background: rgba(245,166,35,0.12);
+      color: var(--amber);
+      border-color: rgba(245,166,35,0.3);
+    }
+
+    .pkg-location { color: var(--muted); font-size: 0.75rem; font-family: var(--mono); }
+
+    .terminal-wrap {
+      background: #0a0c12;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 1.25rem;
+    }
+
+    .terminal-bar {
+      background: #13151f;
+      border-bottom: 1px solid var(--border);
+      padding: 0.4rem 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot.red { background: #ff5f5f; }
+    .dot.amber { background: #f5a623; }
+    .dot.green { background: #3ecf8e; }
+
+    .terminal-label {
+      margin-left: 0.5rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-family: var(--mono);
+    }
+
+    #output {
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      line-height: 1.6;
+      padding: 1rem;
+      height: 280px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: #b0b8d0;
+    }
+
+    #output .line-ok     { color: var(--green); }
+    #output .line-err    { color: var(--red); }
+    #output .line-head   { color: var(--accent); font-weight: bold; }
+    #output .line-divider{ color: var(--border); }
+    #output .line-done   { color: var(--green); font-weight: bold; }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    #status-text {
+      font-size: 0.82rem;
+      color: var(--muted);
+      flex: 1;
+    }
+
+    button {
+      padding: 0.6rem 1.4rem;
+      border-radius: 6px;
+      border: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #btn-install {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    #btn-restart {
+      background: var(--green);
+      color: #000;
+      display: none;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="card-header">
+    <div class="logo">🎙</div>
+    <div>
+      <h1>WhisperApp — First Run Setup</h1>
+      <div class="subtitle">Installing ML dependencies before the app can start</div>
+    </div>
+  </div>
+
+  <div class="card-body">
+    <div class="info-box">
+      WhisperApp needs <strong>PyTorch, WhisperX, and pyannote.audio</strong> to transcribe audio.
+      These are large ML packages — the download is typically
+      <strong id="size-estimate">checking...</strong> depending on your platform.
+      Packages already on your machine will be detected and skipped.
+    </div>
+
+    <div class="platform-row" id="platform-row">
+      <div class="platform-item">
+        <div class="label">Platform</div>
+        <div class="value" id="pf-system">—</div>
+      </div>
+      <div class="platform-item">
+        <div class="label">Torch variant</div>
+        <div class="value" id="pf-variant">—</div>
+      </div>
+    </div>
+
+    <div class="existing-list" id="existing-list">
+      <h2>Package detection</h2>
+      <div id="pkg-rows">
+        <div class="pkg-row" style="color:var(--muted);font-size:.82rem">Checking...</div>
+      </div>
+    </div>
+
+    <div class="terminal-wrap">
+      <div class="terminal-bar">
+        <div class="dot red"></div>
+        <div class="dot amber"></div>
+        <div class="dot green"></div>
+        <span class="terminal-label">pip install</span>
+      </div>
+      <div id="output"><span style="color:var(--muted)">Output will appear here when install starts…</span></div>
+    </div>
+
+    <div class="actions">
+      <div id="status-text">Ready to install.</div>
+      <button id="btn-install" onclick="startInstall()">Install dependencies</button>
+      <button id="btn-restart" onclick="restartApp()">Open WhisperApp →</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const out = document.getElementById('output');
+const statusText = document.getElementById('status-text');
+const btnInstall = document.getElementById('btn-install');
+const btnRestart = document.getElementById('btn-restart');
+
+function appendLine(text, cls) {
+  const old = out.querySelector('span[style]');
+  if (old) old.remove();
+
+  const span = document.createElement('span');
+  if (cls) span.className = cls;
+  span.textContent = text;
+  out.appendChild(span);
+  out.scrollTop = out.scrollHeight;
+}
+
+function classifyLine(text) {
+  const t = text.trim();
+  if (t.startsWith('✓'))          return 'line-ok';
+  if (t.startsWith('[error]'))     return 'line-err';
+  if (t.startsWith('─'))          return 'line-divider';
+  if (t.startsWith('Setup complete')) return 'line-done';
+  if (t.startsWith('Platform:') || t.startsWith('Torch variant:') || t.startsWith('Estimated')) return 'line-head';
+  if (t.startsWith('Installing')) return 'line-head';
+  return '';
+}
+
+async function loadStatus() {
+  try {
+    const res = await fetch('/setup/status');
+    const data = await res.json();
+
+    document.getElementById('pf-system').textContent =
+      data.platform.system + ' ' + data.platform.machine;
+    document.getElementById('pf-variant').textContent = data.platform.torch_variant;
+    document.getElementById('size-estimate').textContent = data.size_estimate;
+
+    const pkgRows = document.getElementById('pkg-rows');
+    const packages = ['torch', 'whisperx', 'pyannote.audio'];
+    pkgRows.innerHTML = '';
+    packages.forEach(pkg => {
+      const info = data.existing[pkg];
+      const row = document.createElement('div');
+      row.className = 'pkg-row';
+      if (info) {
+        row.innerHTML = `
+          <span class="pkg-badge">${info.version}</span>
+          <span>${pkg}</span>
+          <span class="pkg-location">${info.location}</span>`;
+      } else {
+        row.innerHTML = `
+          <span class="pkg-badge missing">missing</span>
+          <span>${pkg}</span>`;
+      }
+      pkgRows.appendChild(row);
+    });
+
+    if (!data.needs_setup) {
+      statusText.textContent = 'All packages already installed.';
+      btnInstall.textContent = 'Reinstall / update';
+    }
+  } catch (e) {
+    statusText.textContent = 'Could not load status: ' + e.message;
+  }
+}
+
+function startInstall() {
+  btnInstall.disabled = true;
+  btnInstall.innerHTML = '<span class="spinner"></span>Installing…';
+  out.innerHTML = '';
+  statusText.textContent = 'Installing — this may take several minutes…';
+
+  const es = new EventSource('/setup/stream');
+
+  es.onmessage = (e) => {
+    if (e.data === '__done__') {
+      es.close();
+      btnInstall.style.display = 'none';
+      btnRestart.style.display = '';
+      statusText.textContent = 'Installation complete!';
+      return;
+    }
+    if (e.data === '__error__') {
+      es.close();
+      btnInstall.disabled = false;
+      btnInstall.innerHTML = 'Retry';
+      statusText.textContent = 'Install failed — see output above.';
+      return;
+    }
+    const text = JSON.parse(e.data);
+    appendLine(text, classifyLine(text));
+  };
+
+  es.onerror = () => {
+    es.close();
+    btnInstall.disabled = false;
+    btnInstall.innerHTML = 'Retry';
+    statusText.textContent = 'Connection lost — click Retry.';
+  };
+}
+
+async function restartApp() {
+  btnRestart.disabled = true;
+  btnRestart.textContent = 'Restarting…';
+  await fetch('/setup/restart', { method: 'POST' });
+  // Poll until the main app is up, then redirect
+  const poll = setInterval(async () => {
+    try {
+      const r = await fetch('/health');
+      if (r.ok) {
+        clearInterval(poll);
+        window.location.href = '/';
+      }
+    } catch (_) {}
+  }, 1500);
+}
+
+loadStatus();
+</script>
+</body>
+</html>

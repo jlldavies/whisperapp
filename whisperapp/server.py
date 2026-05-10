@@ -84,6 +84,70 @@ class AILiveSummaryRequest(BaseModel):
     context: str = ""
 
 
+def create_setup_app(on_restart=None) -> FastAPI:
+    """
+    Minimal FastAPI app served during first-run setup.
+    No torch/whisperx imports — safe to run before ML deps are installed.
+    """
+    from fastapi.responses import FileResponse, StreamingResponse
+    import asyncio
+
+    app = FastAPI(title="WhisperApp Setup")
+    _static = Path(__file__).parent / "static"
+
+    @app.get("/setup")
+    async def setup_page():
+        return FileResponse(_static / "setup.html")
+
+    @app.get("/setup/status")
+    async def setup_status():
+        from whisperapp.setup_env import needs_setup, detect_existing, platform_info, size_estimate
+        info = platform_info()
+        return {
+            "needs_setup": needs_setup(),
+            "existing": detect_existing(),
+            "platform": info,
+            "size_estimate": size_estimate(info),
+        }
+
+    @app.get("/setup/stream")
+    async def setup_stream():
+        from whisperapp.setup_env import install_packages, detect_existing
+        import json as _json
+
+        async def generator():
+            existing = detect_existing()
+            loop = asyncio.get_event_loop()
+            error = False
+            try:
+                for line in install_packages(existing):
+                    yield f"data: {_json.dumps(line)}\n\n"
+                    await asyncio.sleep(0)  # yield control to event loop
+                    if "[error]" in line:
+                        error = True
+            except Exception as exc:
+                yield f"data: {_json.dumps(f'[error] {exc}\n')}\n\n"
+                error = True
+            if error:
+                yield "data: __error__\n\n"
+            else:
+                yield "data: __done__\n\n"
+
+        return StreamingResponse(generator(), media_type="text/event-stream")
+
+    @app.post("/setup/restart")
+    async def setup_restart():
+        if on_restart:
+            asyncio.get_event_loop().call_later(0.5, on_restart)
+        return {"ok": True}
+
+    @app.get("/health")
+    async def health():
+        return {"status": "setup"}
+
+    return app
+
+
 def create_app(queue: JobQueue, worker) -> FastAPI:
     app = FastAPI(title="WhisperApp API", version="1.1.0")
 

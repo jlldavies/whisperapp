@@ -26,11 +26,6 @@ if sys.platform == "win32":
 import uvicorn
 from pathlib import Path
 from whisperapp.config import Config, _config_dir
-from whisperapp.queue import JobQueue
-from whisperapp.worker import Worker
-from whisperapp.server import create_app
-from whisperapp.updater import run_update
-from whisperapp.watcher import MeetingWatcher
 
 
 def _pid_running(pid: int) -> bool:
@@ -91,13 +86,76 @@ def _parse_args():
         "--ui-port", type=int, default=7860,
         help="Web UI port (default: 7860, desktop mode only)",
     )
+    p.add_argument(
+        "--skip-setup-check",
+        action="store_true",
+        default=False,
+        help="Skip the ML dependency check (for development use)",
+    )
     return p.parse_args()
+
+
+def _run_setup(ui_port: int) -> None:
+    """
+    Serve the first-run setup page, block until install completes,
+    then exec() the current process to restart cleanly with ML deps loaded.
+    """
+    from whisperapp.server import create_setup_app
+
+    _done = threading.Event()
+
+    def _on_restart():
+        _done.set()
+
+    setup_app = create_setup_app(on_restart=_on_restart)
+
+    server_thread = threading.Thread(
+        target=lambda: uvicorn.run(
+            setup_app,
+            host="127.0.0.1",
+            port=ui_port,
+            log_level="warning",
+        ),
+        daemon=True,
+    )
+    server_thread.start()
+
+    # Give uvicorn a moment to bind
+    import time
+    time.sleep(1.0)
+
+    url = f"http://127.0.0.1:{ui_port}/setup"
+    print(f"WhisperApp — first run setup: {url}")
+    webbrowser.open(url)
+
+    _done.wait()
+
+    # Restart the process — imports will now find the freshly installed packages
+    print("Restarting WhisperApp...")
+    args = [a for a in sys.argv if a != "--skip-setup-check"]
+    os.execv(sys.executable, [sys.executable] + args)
 
 
 def main():
     args = _parse_args()
     headless = args.headless
     api_host = args.host or ("0.0.0.0" if headless else "127.0.0.1")
+
+    # ── ML dependency check ───────────────────────────────────────────────
+    # Must happen BEFORE importing worker/server (which pull in torch/whisperx).
+    # Uses importlib.util.find_spec — no import, so safe when packages are absent.
+    if not args.skip_setup_check and not headless:
+        from whisperapp.setup_env import needs_setup
+        if needs_setup():
+            _run_setup(args.ui_port)
+            return  # exec() in _run_setup replaces this process; return is safety
+
+    # ── Normal startup — ML deps confirmed present ────────────────────────
+    from whisperapp.queue import JobQueue
+    from whisperapp.worker import Worker
+    from whisperapp.server import create_app
+    from whisperapp.updater import run_update
+    from whisperapp.watcher import MeetingWatcher
 
     if not headless and not _acquire_instance_lock():
         print("WhisperApp is already running.")

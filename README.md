@@ -149,6 +149,20 @@ Everything in the UI is also available via API (port 7861) and CLI — useful fo
 
 ## Quick start
 
+> **First-run download warning**
+>
+> WhisperApp requires PyTorch, WhisperX, and pyannote.audio — large ML packages that are **not bundled** with the installer. Expect a significant one-time download:
+>
+> | Platform | Download size |
+> |----------|--------------|
+> | Apple Silicon (M1–M4) | ~500 MB |
+> | CPU only (Windows/Linux/Intel Mac) | ~800 MB |
+> | NVIDIA GPU (CUDA) | ~2.5 GB |
+>
+> If PyTorch or WhisperX are already installed in your Python environment, WhisperApp detects them and skips the download. Models (Whisper, speaker diarization) are downloaded separately on first use — another 1–3 GB depending on model size. A `large-v2` transcription model is ~3 GB; `base` is ~150 MB.
+>
+> **The first-run setup screen** shows exactly what will be downloaded, detects existing packages, and streams pip install output so you can see progress in real time.
+
 ### macOS (desktop — tray icon + browser UI)
 
 ```zsh
