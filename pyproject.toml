@@ -73,7 +73,7 @@ Repository = "https://github.com/jlldavies/whisperapp"
 desktop = [
     "pystray",
     "Pillow",
-    "pyaudio",
+    "sounddevice",  # ships portaudio prebuilt on all platforms; replaces pyaudio
 ]
 # AI provider SDKs — install only what you need
 claude = ["anthropic>=0.25"]

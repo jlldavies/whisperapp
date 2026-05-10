@@ -12,6 +12,8 @@ services:
       # Webhook security — comma-separated hosts, or * for any; default loopback only
       # WHISPERAPP_WEBHOOK_ALLOWED_HOSTS: "*"
       # WHISPERAPP_WEBHOOK_SECRET: your-secret-here
+      # API key auth for non-loopback access (required when exposing beyond localhost)
+      # WHISPERAPP_API_KEY: your-api-key-here
     volumes:
       # Model weights — persisted so they survive container restarts
       - whisperapp-models:/root/.cache

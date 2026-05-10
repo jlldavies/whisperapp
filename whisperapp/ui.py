@@ -12,23 +12,20 @@ def create_ui(queue, worker) -> FastAPI:
 
 
 def list_audio_devices() -> list[dict]:
-    """Return list of audio input devices. Returns [] if pyaudio unavailable."""
+    """Return list of audio input devices. Returns [] if sounddevice unavailable."""
     try:
-        import pyaudio
+        import sounddevice as sd
     except ImportError:
         return []
-    p = pyaudio.PyAudio()
     devices = []
     seen: set[str] = set()
-    for i in range(p.get_device_count()):
-        info = p.get_device_info_by_index(i)
-        if info["maxInputChannels"] > 0 and info["name"] not in seen:
-            seen.add(info["name"])
+    for d in sd.query_devices():
+        if d["max_input_channels"] > 0 and d["name"] not in seen:
+            seen.add(d["name"])
             devices.append({
-                "name": info["name"],
-                "index": i,
-                "sample_rate": int(info["defaultSampleRate"]),
-                "channels": int(info["maxInputChannels"]),
+                "name": d["name"],
+                "index": d.get("index", len(devices)),
+                "sample_rate": int(d["default_samplerate"]),
+                "channels": int(d["max_input_channels"]),
             })
-    p.terminate()
     return devices

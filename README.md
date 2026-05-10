@@ -163,6 +163,10 @@ Everything in the UI is also available via API (port 7861) and CLI — useful fo
 >
 > **The first-run setup screen** shows exactly what will be downloaded, detects existing packages, and streams pip install output so you can see progress in real time.
 
+> **Code signing notice**
+>
+> The DMG and Windows installer are not code-signed. macOS Gatekeeper will show "cannot be verified" on first open — right-click the app and choose **Open** to proceed. Windows SmartScreen will show an "unrecognised app" warning — click **More info → Run anyway**. This affects first launch only. Code signing requires an Apple Developer account and a Windows EV certificate; if you need fully silent installs for managed deployments, install via `pip` instead.
+
 ### macOS (desktop — tray icon + browser UI)
 
 ```zsh
@@ -414,6 +418,7 @@ All settings live at `~/.whisperapp/config.json` — editable via the Settings U
 | `output_template_pdf` | `""` | Path to custom `.html` template for PDF (blank = built-in default) |
 | `webhook_allowed_hosts` | `[]` | Hosts that may receive webhooks — `[]` = loopback only, `["*"]` = any |
 | `webhook_secret` | *(auto)* | HMAC-SHA256 signing key — auto-generated on first run |
+| `api_key` | `""` | API key for non-loopback access; blank = loopback-only (no auth on loopback either way) |
 
 ---
 

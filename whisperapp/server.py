@@ -102,12 +102,15 @@ def create_setup_app(on_restart=None) -> FastAPI:
     @app.get("/setup/status")
     async def setup_status():
         from whisperapp.setup_env import needs_setup, detect_existing, platform_info, size_estimate
+        from whisperapp.config import Config as _Config
         info = platform_info()
+        cfg = _Config()
         return {
             "needs_setup": needs_setup(),
             "existing": detect_existing(),
             "platform": info,
             "size_estimate": size_estimate(info),
+            "hf_token_set": bool(cfg.hf_token),
         }
 
     @app.get("/setup/stream")
@@ -141,6 +144,17 @@ def create_setup_app(on_restart=None) -> FastAPI:
             asyncio.get_event_loop().call_later(0.5, on_restart)
         return {"ok": True}
 
+    @app.post("/setup/save-token")
+    async def setup_save_token(request: Request):
+        body = await request.json()
+        token = (body.get("hf_token") or "").strip()
+        if token:
+            from whisperapp.config import Config as _Config
+            cfg = _Config()
+            cfg.hf_token = token
+            cfg.save()
+        return {"ok": True}
+
     @app.get("/health")
     async def health():
         return {"status": "setup"}
@@ -172,8 +186,19 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
     @app.middleware("http")
     async def local_only(request: Request, call_next):
         client_ip = request.client.host if request.client else "127.0.0.1"
-        if client_ip not in ALLOWED_IPS:
-            return Response("Forbidden — local connections only", status_code=403)
+        is_loopback = client_ip in ALLOWED_IPS
+        if not is_loopback:
+            # Non-loopback: require API key if one is configured
+            cfg = Config()
+            if cfg.api_key:
+                auth = request.headers.get("Authorization", "")
+                if auth != f"Bearer {cfg.api_key}":
+                    return Response(
+                        "Unauthorized — provide Authorization: Bearer <api_key>",
+                        status_code=401,
+                    )
+            else:
+                return Response("Forbidden — local connections only", status_code=403)
         return await call_next(request)
 
     def _ai():
@@ -199,9 +224,13 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         from whisperapp.worker import (
             _WHISPER_DEVICE, _DIARIZE_DEVICE, _COMPUTE_TYPE, _has_mlx_whisper
         )
+        from whisperapp import __version__
+        from whisperapp.updater import latest_version
         return {
             "platform": sys.platform,
             "python": sys.version.split()[0],
+            "version": __version__,
+            "update_available": latest_version(),
             "torch": torch.__version__,
             "whisper_device": _WHISPER_DEVICE,
             "diarize_device": _DIARIZE_DEVICE,

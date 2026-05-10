@@ -76,7 +76,7 @@ export function renderSidebar(container, activeId, onNavigate) {
     });
   }
 
-  // Fetch /info to populate GPU row
+  // Fetch /info to populate GPU row and check for app updates
   fetch('http://127.0.0.1:7861/info')
     .then(r => r.json())
     .then(info => {
@@ -85,6 +85,27 @@ export function renderSidebar(container, activeId, onNavigate) {
         <span style="color:var(--ink-4)">GPU</span>
         <span>${info.acceleration}</span>
       `;
+      if (info.update_available) {
+        const bar = document.getElementById('status-bar');
+        if (bar) {
+          const banner = document.createElement('a');
+          banner.href = 'https://github.com/jlldavies/whisperapp/releases/latest';
+          banner.target = '_blank';
+          banner.rel = 'noopener noreferrer';
+          banner.style.cssText = [
+            'display:flex', 'align-items:center', 'gap:6px',
+            'margin-top:8px', 'padding:6px 8px', 'border-radius:5px',
+            'background:color-mix(in oklch,var(--accent) 14%,transparent)',
+            'border:1px solid color-mix(in oklch,var(--accent) 30%,transparent)',
+            'color:var(--accent)', 'font-size:11px', 'text-decoration:none',
+            'line-height:1.3',
+          ].join(';');
+          banner.innerHTML = `<svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor">
+            <path d="M6 0l1.5 4.2L12 4.5l-3.5 2.7 1.2 4.8L6 9.4 2.3 12l1.2-4.8L0 4.5l4.5-.3z"/>
+          </svg>v${info.update_available} available`;
+          bar.appendChild(banner);
+        }
+      }
     })
     .catch(() => {});
 }

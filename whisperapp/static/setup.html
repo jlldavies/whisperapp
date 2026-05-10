@@ -279,7 +279,29 @@
     <div class="actions">
       <div id="status-text">Ready to install.</div>
       <button id="btn-install" onclick="startInstall()">Install dependencies</button>
-      <button id="btn-restart" onclick="restartApp()">Open WhisperApp →</button>
+    </div>
+
+    <!-- Step 2: HuggingFace token — shown after install completes -->
+    <div id="token-step" style="display:none;margin-top:1.25rem;border-top:1px solid var(--border);padding-top:1.25rem">
+      <div class="info-box" style="margin-bottom:1rem">
+        <strong>Speaker diarization requires a HuggingFace token.</strong><br>
+        It's free — <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener"
+          style="color:var(--accent)">create one at huggingface.co/settings/tokens</a>,
+        then paste it below. You can also add it later in Settings.
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="hf-token-input" type="password"
+          placeholder="hf_xxxxxxxxxxxxxxxx"
+          style="flex:1;background:#0a0c12;border:1px solid var(--border);border-radius:6px;
+                 padding:0.55rem 0.75rem;color:var(--text);font-family:var(--mono);
+                 font-size:0.82rem;outline:none">
+        <button id="btn-restart" onclick="saveTokenAndOpen()" style="background:var(--green);color:#000;white-space:nowrap">
+          Open WhisperApp →
+        </button>
+        <button onclick="restartApp()" style="background:transparent;border:1px solid var(--border);color:var(--muted)">
+          Skip
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -345,6 +367,9 @@ async function loadStatus() {
     if (!data.needs_setup) {
       statusText.textContent = 'All packages already installed.';
       btnInstall.textContent = 'Reinstall / update';
+      if (!data.hf_token_set) {
+        document.getElementById('token-step').style.display = '';
+      }
     }
   } catch (e) {
     statusText.textContent = 'Could not load status: ' + e.message;
@@ -363,8 +388,9 @@ function startInstall() {
     if (e.data === '__done__') {
       es.close();
       btnInstall.style.display = 'none';
-      btnRestart.style.display = '';
       statusText.textContent = 'Installation complete!';
+      document.getElementById('token-step').style.display = '';
+      document.getElementById('hf-token-input').focus();
       return;
     }
     if (e.data === '__error__') {
@@ -386,9 +412,21 @@ function startInstall() {
   };
 }
 
+async function saveTokenAndOpen() {
+  const token = document.getElementById('hf-token-input').value.trim();
+  if (token) {
+    await fetch('/setup/save-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hf_token: token }),
+    });
+  }
+  restartApp();
+}
+
 async function restartApp() {
-  btnRestart.disabled = true;
-  btnRestart.textContent = 'Restarting…';
+  const btn = document.getElementById('btn-restart');
+  if (btn) { btn.disabled = true; btn.textContent = 'Restarting…'; }
   await fetch('/setup/restart', { method: 'POST' });
   // Poll until the main app is up, then redirect
   const poll = setInterval(async () => {

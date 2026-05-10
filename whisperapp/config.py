@@ -53,6 +53,9 @@ class Config:
     # any host (permissionless). Explicit entries are exact hostname/IP matches.
     webhook_allowed_hosts: list = field(default_factory=list)
     webhook_secret: str = ""         # HMAC-SHA256 key; auto-generated on first run
+    # API key auth for non-loopback (headless/Docker) deployments.
+    # Blank = no auth required (loopback is always unauthenticated regardless).
+    api_key: str = ""
 
     def __post_init__(self):
         if not self.default_output_path:
@@ -89,6 +92,8 @@ class Config:
             self.webhook_allowed_hosts = [h.strip() for h in raw.split(",") if h.strip()]
         if os.environ.get("WHISPERAPP_WEBHOOK_SECRET"):
             self.webhook_secret = os.environ["WHISPERAPP_WEBHOOK_SECRET"]
+        if os.environ.get("WHISPERAPP_API_KEY"):
+            self.api_key = os.environ["WHISPERAPP_API_KEY"]
 
     def save(self):
         data = {k: v for k, v in asdict(self).items() if not k.startswith("_")}
