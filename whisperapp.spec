@@ -43,6 +43,7 @@ a = Analysis(
     datas=[
         ("whisperapp/static",    "whisperapp/static"),
         ("whisperapp/templates", "whisperapp/templates"),
+        ("mcp.json",             "."),
     ],
     hiddenimports=[
         # Core app modules not reachable via static analysis

@@ -125,16 +125,40 @@ _hf_op_state: dict[str, dict] = {}
 _hf_op_lock = threading.Lock()
 
 
+def _make_hf_tqdm(model_id: str):
+    """Return a tqdm subclass that forwards progress to _hf_op_state."""
+    try:
+        from tqdm import tqdm as _tqdm
+    except ImportError:
+        return None
+
+    class _HFProgress(_tqdm):
+        def update(self, n=1):
+            super().update(n)
+            if self.total:
+                pct = min(100.0, self.n / self.total * 100)
+                with _hf_op_lock:
+                    st = _hf_op_state.get(model_id, {})
+                    st["progress"] = pct
+                    _hf_op_state[model_id] = st
+
+    return _HFProgress
+
+
 def _run_hf_update(model_id: str, repo: str) -> None:
     """Background: re-pull the latest revision into the local HF cache."""
     def _runner():
         with _hf_op_lock:
-            _hf_op_state[model_id] = {"op": "update", "error": None}
+            _hf_op_state[model_id] = {"op": "update", "progress": 0.0, "error": None}
         try:
             from huggingface_hub import snapshot_download
-            snapshot_download(repo_id=repo, revision="main")
+            tqdm_cls = _make_hf_tqdm(model_id)
+            kwargs = {"repo_id": repo, "revision": "main"}
+            if tqdm_cls is not None:
+                kwargs["tqdm_class"] = tqdm_cls
+            snapshot_download(**kwargs)
             with _hf_op_lock:
-                _hf_op_state[model_id] = {"op": None, "error": None}
+                _hf_op_state[model_id] = {"op": None, "progress": 100.0, "error": None}
             # Refresh cached shas so the catalogue immediately drops the
             # `update` badge after the download completes.
             local = _local_hf_sha(repo)
@@ -144,7 +168,7 @@ def _run_hf_update(model_id: str, repo: str) -> None:
                 _hf_revision_cache[model_id] = rev
         except Exception as e:
             with _hf_op_lock:
-                _hf_op_state[model_id] = {"op": None, "error": str(e)}
+                _hf_op_state[model_id] = {"op": None, "progress": 0.0, "error": str(e)}
 
     threading.Thread(target=_runner, daemon=True).start()
 
@@ -424,9 +448,11 @@ class ModelRegistry:
                     # spinner-style state and skip update detection while it
                     # runs.
                     with _hf_op_lock:
-                        in_flight = _hf_op_state.get(m["id"], {}).get("op")
+                        op_entry = _hf_op_state.get(m["id"], {})
+                        in_flight = op_entry.get("op")
                     if in_flight:
                         entry["state"] = "downloading"
+                        entry["progress"] = op_entry.get("progress", 0.0) / 100.0
                         entry.pop("role", None)
                     elif entry["state"] in ("installed", "active"):
                         # If we previously fetched the remote sha (Check for

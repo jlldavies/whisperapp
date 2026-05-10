@@ -23,9 +23,42 @@ if sys.platform == "win32":
         except ImportError:
             pass
 
+import logging
+import logging.handlers
 import uvicorn
 from pathlib import Path
 from whisperapp.config import Config, _config_dir
+
+
+def _configure_logging() -> None:
+    """Set up root logger: stderr for INFO+, rotating file for DEBUG+."""
+    log_dir = Path.home() / ".whisperapp"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "whisperapp.log"
+
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+
+    # Rotating file — keep 5 × 2 MB = 10 MB max
+    fh = logging.handlers.RotatingFileHandler(
+        log_file, maxBytes=2 * 1024 * 1024, backupCount=5, encoding="utf-8"
+    )
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    root.addHandler(fh)
+
+    # Console — INFO only (keeps startup output clean)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    root.addHandler(ch)
+
+    # Suppress noisy third-party loggers at DEBUG level
+    for name in ("uvicorn.access", "httpx", "httpcore", "urllib3"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def _pid_running(pid: int) -> bool:
@@ -137,6 +170,7 @@ def _run_setup(ui_port: int) -> None:
 
 
 def main():
+    _configure_logging()
     args = _parse_args()
     headless = args.headless
     api_host = args.host or ("0.0.0.0" if headless else "127.0.0.1")
