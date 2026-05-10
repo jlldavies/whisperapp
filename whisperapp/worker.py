@@ -1,4 +1,5 @@
 import gc
+import logging
 import threading
 import time
 from pathlib import Path
@@ -7,6 +8,30 @@ import whisperx
 from whisperx.diarize import DiarizationPipeline
 from whisperapp.queue import JobQueue, JobStatus
 from whisperapp.checkpoints import CheckpointManager
+
+_log = logging.getLogger(__name__)
+
+
+def _fire_webhook(job: dict) -> None:
+    url = job.get("callback_url")
+    if not url:
+        return
+    import requests
+    payload = {
+        "event": "job.completed" if job["status"] == JobStatus.DONE else "job.failed",
+        "job_id": job["id"],
+        "status": job["status"],
+        "file_name": job.get("file_name"),
+        "file_path": job.get("file_path"),
+        "output_path": job.get("output_path"),
+        "formats": job.get("formats"),
+        "completed_at": job.get("completed_at"),
+        "error": job.get("error"),
+    }
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as exc:
+        _log.warning("Webhook POST to %s failed: %s", url, exc)
 
 def _detect_device() -> tuple[str, str, str]:
     """
@@ -538,9 +563,19 @@ class Worker:
             else:
                 self._write_outputs(job, final_result, cm)
                 self.queue.complete_job(job_id, job["output_path"])
+                threading.Thread(
+                    target=_fire_webhook,
+                    args=(self.queue.get_job(job_id),),
+                    daemon=True,
+                ).start()
 
         except Exception as e:
             self.queue.set_status(job_id, JobStatus.FAILED, error=str(e))
+            threading.Thread(
+                target=_fire_webhook,
+                args=(self.queue.get_job(job_id),),
+                daemon=True,
+            ).start()
             raise
         finally:
             hb.stop()
@@ -589,6 +624,11 @@ class Worker:
             cm.save("saving", final_result)
             self._write_outputs(job, final_result, cm)
             self.queue.complete_job(job_id, job["output_path"])
+            threading.Thread(
+                target=_fire_webhook,
+                args=(self.queue.get_job(job_id),),
+                daemon=True,
+            ).start()
             cm.cleanup()
         finally:
             _cleanup_memory()

@@ -60,8 +60,13 @@ class JobQueue:
                 pass
             # Backfill any rows with order_idx=0 using their rowid
             conn.execute("UPDATE jobs SET order_idx = rowid WHERE order_idx = 0")
+            try:
+                conn.execute("ALTER TABLE jobs ADD COLUMN callback_url TEXT")
+            except Exception:
+                pass
 
-    def create_job(self, file_path, output_path, model, diarize, formats) -> str:
+    def create_job(self, file_path, output_path, model, diarize, formats,
+                   callback_url=None) -> str:
         job_id = str(uuid.uuid4())
         with self._conn() as conn:
             row = conn.execute(
@@ -70,12 +75,12 @@ class JobQueue:
             order_idx = row[0] if row else 1
             conn.execute("""
                 INSERT INTO jobs (id, file_path, file_name, output_path, model,
-                    diarize, formats, status, created_at, order_idx)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    diarize, formats, status, created_at, order_idx, callback_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (job_id, str(file_path), Path(file_path).name,
                   str(output_path), model, int(diarize),
                   json.dumps(formats), JobStatus.QUEUED,
-                  datetime.now(timezone.utc).isoformat(), order_idx))
+                  datetime.now(timezone.utc).isoformat(), order_idx, callback_url))
         return job_id
 
     def get_job(self, job_id) -> dict:

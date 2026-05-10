@@ -303,6 +303,37 @@ GET    /templates/download-html         Download default HTML/PDF template
 GET    /templates/download-legal-html   Download legal chain-of-custody template
 ```
 
+### Webhooks
+
+Pass a `callback_url` when submitting a job and WhisperApp will POST the result there when the job finishes:
+
+```bash
+curl -X POST http://127.0.0.1:7861/transcribe \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "/path/to/audio.mp3",
+    "callback_url": "https://your-server.example.com/webhook"
+  }'
+```
+
+The payload delivered to `callback_url` on completion or failure:
+
+```json
+{
+  "event": "job.completed",
+  "job_id": "...",
+  "status": "done",
+  "file_name": "audio.mp3",
+  "file_path": "/path/to/audio.mp3",
+  "output_path": "/path/to/output",
+  "formats": ["txt", "srt"],
+  "completed_at": "2024-01-01T12:00:00+00:00",
+  "error": null
+}
+```
+
+`event` is `job.completed` for success or `job.failed` for errors. The POST is fire-and-forget — failures are logged but do not affect the job.
+
 ---
 
 ## Configuration
@@ -364,7 +395,9 @@ pytest tests/test_browser.py -m browser -v
 HF_TOKEN=hf_... pytest tests/test_integration.py -v -m integration
 ```
 
-Tests cover: config, queue, worker, streaming, formatters, pause markers, acoustic analysis, metadata + SHA-256 hashing, emotion registry, model catalogue, speakers, server endpoints (including segments + source_metadata), document formats, legal transcript generation, AI provider abstraction, and browser-driven UI tests (settings panel, transcript viewer, search, copy, print, keyboard shortcuts).
+Tests cover: config, queue, worker, streaming, formatters, pause markers, acoustic analysis, metadata + SHA-256 hashing, emotion registry, model catalogue, speakers, server endpoints (including segments + source_metadata, webhooks/callbacks), document formats, legal transcript generation, AI provider abstraction, and browser-driven UI tests (settings panel, transcript viewer, search, copy, print, keyboard shortcuts).
+
+CI runs automatically on every push via GitHub Actions (`.github/workflows/ci.yml`) — same test suite, CPU-only PyTorch, ubuntu-latest. A Docker image is built on every push and pushed to the GitHub Container Registry on tagged releases. PyPI releases are published automatically when a GitHub Release is created (`.github/workflows/publish.yml`).
 
 ---
 

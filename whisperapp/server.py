@@ -31,6 +31,7 @@ class TranscribeRequest(BaseModel):
     model: str = "large-v2"
     diarize: bool = True
     formats: List[str] = ["txt", "srt", "vtt", "json"]
+    callback_url: Optional[str] = None
 
     @field_validator("model")
     @classmethod
@@ -166,7 +167,8 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(e))
         job_id = queue.create_job(
             str(file_path), str(output_path),
-            model, req.diarize, req.formats)
+            model, req.diarize, req.formats,
+            callback_url=req.callback_url)
         return {"job_id": job_id}
 
     @app.get("/jobs")

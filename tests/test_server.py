@@ -671,3 +671,43 @@ async def test_templates_before_parameterised_routes(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
             r = await c.get(path)
         assert r.status_code == 200, f"{path} returned {r.status_code}"
+
+
+@pytest.mark.asyncio
+async def test_transcribe_stores_callback_url(app_and_queue, tmp_path):
+    app, queue = app_and_queue
+    audio = tmp_path / "x.mp3"
+    audio.write_bytes(b"\x00" * 100)
+    body = {
+        "file_path": str(audio),
+        "output_path": str(tmp_path),
+        "model": "base",
+        "diarize": False,
+        "formats": ["txt"],
+        "callback_url": "http://example.com/webhook",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.post("/transcribe", json=body)
+    assert r.status_code == 200
+    job_id = r.json()["job_id"]
+    job = queue.get_job(job_id)
+    assert job["callback_url"] == "http://example.com/webhook"
+
+
+@pytest.mark.asyncio
+async def test_transcribe_callback_url_optional(app_and_queue, tmp_path):
+    app, queue = app_and_queue
+    audio = tmp_path / "x.mp3"
+    audio.write_bytes(b"\x00" * 100)
+    body = {
+        "file_path": str(audio),
+        "output_path": str(tmp_path),
+        "model": "base",
+        "diarize": False,
+        "formats": ["txt"],
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.post("/transcribe", json=body)
+    assert r.status_code == 200
+    job = queue.get_job(r.json()["job_id"])
+    assert job.get("callback_url") is None
