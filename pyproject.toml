@@ -9,6 +9,27 @@ description = "Local speech transcription with speaker diarization — web UI, s
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
+authors = [
+    {name = "James Davies", email = "james@handleport.com"},
+]
+keywords = [
+    "whisper", "transcription", "speech-to-text", "diarization",
+    "speaker-diarization", "audio", "mlx", "whisperx",
+]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Environment :: Web Environment",
+    "Environment :: No Input/Output (Daemon)",
+]
 dependencies = [
     # Core transcription — works on all platforms (CPU + CUDA on Windows/Linux,
     # CPU with int8 on Mac, MPS for diarization on Apple Silicon)
@@ -41,6 +62,11 @@ dependencies = [
     "truststore; sys_platform == 'win32'",
 ]
 
+[project.urls]
+Homepage = "https://github.com/jlldavies/whisperapp"
+Repository = "https://github.com/jlldavies/whisperapp"
+"Bug Tracker" = "https://github.com/jlldavies/whisperapp/issues"
+
 [project.optional-dependencies]
 # Desktop app extras — tray icon, mic recording, browser launch.
 # Not needed for headless / Docker / server deployments.
@@ -70,6 +96,12 @@ whisperapp-app = "whisperapp.__main__:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["whisperapp*"]
+
+[tool.setuptools.package-data]
+whisperapp = [
+    "static/**/*",
+    "templates/**/*",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
