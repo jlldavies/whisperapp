@@ -268,6 +268,8 @@ function renderStorage(body, cfg) {
            download="whisperapp_template.docx">Download DOCX template</a>
         <a class="wa-btn" href="http://127.0.0.1:7861/templates/download-html"
            download="whisperapp_pdf_template.html">Download HTML template</a>
+        <a class="wa-btn" href="http://127.0.0.1:7861/templates/download-legal-html"
+           download="whisperapp_legal_template.html">Download Legal template</a>
       </div>
       <div style="margin-top:16px">
         <span class="wa-label" style="display:block;margin-bottom:8px">Available markers</span>
@@ -285,6 +287,9 @@ function renderStorage(body, cfg) {
             ['{{meeting_notes}}','AI meeting notes'],
             ['{{language}}','Detected language'],
             ['{{filepath}}','Full source path'],
+            ['{{source_hash}}','SHA-256 of source file'],
+            ['{{file_size_bytes}}','Source file size'],
+            ['{{legal_transcript}}','Line-numbered transcript'],
           ].map(([marker, desc]) => `
             <div style="display:flex;flex-direction:column;gap:2px;padding:4px 0">
               <span class="mono" style="font-size:10.5px;color:var(--accent)">${marker}</span>

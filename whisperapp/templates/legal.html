@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Transcript — {{filename}}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    @page {
+      size: A4;
+      margin: 25mm 22mm;
+      @bottom-center {
+        content: "Page " counter(page) " of " counter(pages);
+        font-family: 'Courier New', monospace;
+        font-size: 8pt;
+        color: #888;
+      }
+    }
+
+    body {
+      font-family: 'Courier New', monospace;
+      font-size: 10pt;
+      color: #111;
+      background: #fff;
+      max-width: 210mm;
+      margin: 0 auto;
+    }
+
+    .doc-title {
+      font-size: 13pt;
+      font-weight: bold;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      text-align: center;
+      padding-bottom: 6px;
+      border-bottom: 3px double #111;
+      margin-bottom: 16px;
+    }
+
+    .provenance {
+      background: #f8f8f8;
+      border: 1px solid #ccc;
+      padding: 12px 16px;
+      font-size: 9pt;
+      margin-bottom: 24px;
+      white-space: pre-wrap;
+      line-height: 1.6;
+    }
+
+    .transcript-heading {
+      font-size: 10pt;
+      font-weight: bold;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      border-bottom: 1px solid #aaa;
+      padding-bottom: 4px;
+      margin-bottom: 10px;
+    }
+
+    .ll-row {
+      display: grid;
+      grid-template-columns: 52px 82px 130px 1fr;
+      gap: 6px;
+      padding: 2px 0;
+      border-bottom: 1px solid #eee;
+      font-size: 9.5pt;
+      line-height: 1.5;
+      break-inside: avoid;
+    }
+
+    .ll-num {
+      color: #888;
+      font-size: 8.5pt;
+      padding-top: 1px;
+      user-select: none;
+    }
+
+    .ll-ts {
+      color: #666;
+      font-size: 8.5pt;
+      padding-top: 1px;
+    }
+
+    .ll-speaker {
+      font-weight: bold;
+      font-size: 9pt;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .ll-text {
+      color: #111;
+    }
+
+    .ll-pause {
+      color: #999;
+      font-style: italic;
+      border-bottom: none;
+    }
+
+    .ll-pause .ll-text {
+      grid-column: 2 / -1;
+      color: #999;
+    }
+
+    .footer {
+      margin-top: 24px;
+      padding-top: 8px;
+      border-top: 2px solid #aaa;
+      font-size: 8pt;
+      color: #777;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    {{meeting_notes_block}}
+
+    @media print {
+      body { padding: 0; }
+      .ll-row { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="doc-title">Transcript of Audio Recording</div>
+
+  <div class="provenance">Source file  : {{filename}}
+Source path  : {{filepath}}
+SHA-256      : {{source_hash}}
+File size    : {{file_size_bytes}} bytes
+Duration     : {{duration}}
+Transcribed  : {{datetime}}
+Model        : {{model}}
+Language     : {{language}}
+Speakers     : {{speakers}}</div>
+
+  {{meeting_notes_block}}
+
+  <div class="transcript-heading">Transcript</div>
+
+  {{legal_block}}
+
+  <div class="footer">
+    <span>{{filepath}}</span>
+    <span>WhisperApp · SHA-256 {{source_hash}}</span>
+  </div>
+
+</body>
+</html>

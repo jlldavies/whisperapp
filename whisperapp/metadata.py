@@ -10,6 +10,7 @@ processing. Missing fields are simply absent (no None, no empty strings).
 
 from __future__ import annotations
 import datetime as _dt
+import hashlib
 import logging
 from pathlib import Path
 from typing import Any, Optional
@@ -103,6 +104,17 @@ def _extract_tags(audio) -> dict[str, str]:
     return out
 
 
+def _sha256(path: Path) -> Optional[str]:
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            while chunk := f.read(65536):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
+
+
 def _format_duration(seconds: float) -> str:
     seconds = int(round(seconds))
     h, rem = divmod(seconds, 3600)
@@ -130,6 +142,11 @@ def extract(file_path: str | Path) -> dict[str, str]:
         out["file_ctime"] = _iso(st.st_ctime)
     except Exception as e:
         log.debug("stat failed for %s: %s", path, e)
+
+    # SHA-256 of source file — chain of custody / provenance
+    sha = _sha256(path)
+    if sha:
+        out["source_hash"] = sha
 
     # Tag-level data via mutagen — best-effort, never blocks
     try:
@@ -163,6 +180,7 @@ def render_text_block(meta: dict[str, str], comment_prefix: str = "") -> str:
     pretty = {
         "source_file":      "Source",
         "source_path":      "Path",
+        "source_hash":      "SHA-256",
         "recorded_at":      "Recorded",
         "file_modified":    "File modified",
         "file_ctime":       "File created",

@@ -22,6 +22,9 @@ Available markers
 {{word_count}}          Total word count
 {{meeting_notes}}       AI-generated meeting notes (blank if not run)
 {{segments}}            Timestamped segments, one per line
+{{source_hash}}         SHA-256 hex digest of the source file
+{{file_size_bytes}}     Source file size in bytes
+{{legal_transcript}}    Line-numbered transcript (L0001 HH:MM:SS [Speaker] text)
 """
 
 from __future__ import annotations
@@ -42,17 +45,21 @@ def build_context(result: dict, source_file: str) -> dict:
     meta = result.get("source_metadata") or {}
     segments = result.get("segments", [])
 
-    plain_lines, diarized_lines, seg_lines = [], [], []
+    plain_lines, diarized_lines, seg_lines, legal_lines = [], [], [], []
     speakers_seen: set[str] = set()
+    line_num = 0
 
     for seg in segments:
+        line_num += 1
         text = seg.get("text", "").strip()
         speaker = seg.get("speaker", "")
+        num = f"L{line_num:04d}"
 
         if seg.get("is_pause_marker"):
             plain_lines.append(text)
             diarized_lines.append(text)
             seg_lines.append(f"           {text}")
+            legal_lines.append(f"{num}  {'':20}  {'':14}  {text}")
             continue
 
         plain_lines.append(text)
@@ -64,6 +71,10 @@ def build_context(result: dict, source_file: str) -> dict:
         end   = _fmt_ts(seg.get("end", 0))
         prefix = f"[{speaker}] " if speaker else ""
         seg_lines.append(f"{start} → {end}  {prefix}{text}")
+
+        ts_long = _fmt_ts_long(seg.get("start", 0))
+        speaker_col = f"[{speaker}]" if speaker else ""
+        legal_lines.append(f"{num}  {ts_long:<10}  {speaker_col:<14}  {text}")
 
     word_count = sum(
         len(seg.get("text", "").split())
@@ -85,6 +96,9 @@ def build_context(result: dict, source_file: str) -> dict:
         "word_count":          str(word_count),
         "meeting_notes":       result.get("meeting_notes", ""),
         "segments":            "\n".join(seg_lines),
+        "source_hash":         meta.get("source_hash", "—"),
+        "file_size_bytes":     meta.get("file_size_bytes", "—"),
+        "legal_transcript":    "\n".join(legal_lines),
     }
 
 
@@ -93,6 +107,14 @@ def _fmt_ts(seconds: float) -> str:
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
     return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def _fmt_ts_long(seconds: float) -> str:
+    """Always HH:MM:SS — used for legal transcripts where column alignment matters."""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 def substitute(text: str, ctx: dict) -> str:
@@ -359,6 +381,57 @@ def _build_html_ctx(ctx: dict) -> dict:
         )
     else:
         extra["meeting_notes_block"] = ""
+
+    # Legal provenance block
+    size_str = ctx.get("file_size_bytes", "—")
+    try:
+        size_str = f"{int(size_str):,} bytes"
+    except (ValueError, TypeError):
+        pass
+    extra["provenance_block"] = (
+        f"TRANSCRIPT OF AUDIO RECORDING\n"
+        f"{'═' * 52}\n"
+        f"Source file  : {ctx.get('filename', '—')}\n"
+        f"Source path  : {ctx.get('filepath', '—')}\n"
+        f"SHA-256      : {ctx.get('source_hash', '—')}\n"
+        f"File size    : {size_str}\n"
+        f"Duration     : {ctx.get('duration', '—')}\n"
+        f"Transcribed  : {ctx.get('datetime', '—')}\n"
+        f"Model        : {ctx.get('model', '—')}\n"
+        f"Language     : {ctx.get('language', '—')}\n"
+        f"{'═' * 52}"
+    )
+
+    # Legal block — HTML version of the line-numbered transcript
+    legal_rows = []
+    for line in ctx["legal_transcript"].split("\n"):
+        if not line.strip():
+            continue
+        parts = line.split("  ", 3)
+        if len(parts) == 4:
+            num, ts, speaker, text = parts
+            is_pause = ts.strip() == "" and speaker.strip() == ""
+            if is_pause:
+                legal_rows.append(
+                    f'<div class="ll-row ll-pause">'
+                    f'<span class="ll-num">{num}</span>'
+                    f'<span class="ll-ts"></span>'
+                    f'<span class="ll-speaker"></span>'
+                    f'<span class="ll-text">{text.strip()}</span>'
+                    f'</div>'
+                )
+            else:
+                legal_rows.append(
+                    f'<div class="ll-row">'
+                    f'<span class="ll-num">{num}</span>'
+                    f'<span class="ll-ts">{ts.strip()}</span>'
+                    f'<span class="ll-speaker">{speaker.strip()}</span>'
+                    f'<span class="ll-text">{text.strip()}</span>'
+                    f'</div>'
+                )
+        else:
+            legal_rows.append(f'<div class="ll-row"><span class="ll-num"></span><span class="ll-text" style="grid-column:2/-1">{line.strip()}</span></div>')
+    extra["legal_block"] = "\n".join(legal_rows)
 
     return extra
 

@@ -35,6 +35,7 @@ export const api = {
   moveJobDown:  (id)   => req('POST', `/jobs/${id}/move-down`),
   clearJobs:    ()     => req('POST', '/jobs/clear'),
   getTranscript: (id, fmt) => req('GET', `/jobs/${id}/transcript?format=${fmt}`),
+  getSegments:   (id, offset=0, limit=500) => req('GET', `/jobs/${id}/segments?offset=${offset}&limit=${limit}`),
 
   // Worker
   workerStatus: ()     => req('GET',  '/worker/status'),

@@ -15,6 +15,8 @@ Most Whisper tools give you text. WhisperApp gives you **analysis-ready transcri
 - **Emotion labels** from multiple speech emotion recognition models, combined and confidence-weighted
 - **Speaker-labelled output** from an interactive review UI — listen to snippets, assign real names, then save; all formats get `[Name]:` prefixes
 - **Rich document output** — DOCX and PDF using your own branded template, with `{{field}}` markers for filename, date, speakers, meeting notes, and more
+- **Chain-of-custody provenance** — every transcript carries a SHA-256 hash of the source file, file size, path, and transcription timestamp; the built-in legal template produces a line-numbered formal document with full provenance block ready for disclosure
+- **Built-in transcript viewer** — click any completed job to open a document reader: line-numbered, searchable, copyable, and print-ready with a single button; no media player needed
 - **Production-grade batch queue** — SQLite-backed with job reordering, crash recovery, and worker pause/resume; not just a UI wrapper around a CLI tool
 - **Full automation surface** — REST API, CLI, and MCP-compatible; trigger from scripts, wire into pipelines, integrate with other tools
 
@@ -101,6 +103,7 @@ DOCX and PDF outputs use a template file with `{{field}}` markers — drop your 
 | Marker | Value |
 |--------|-------|
 | `{{filename}}` | Source file name |
+| `{{filepath}}` | Full source path |
 | `{{datetime}}` | Transcription date and time |
 | `{{duration}}` | Audio length |
 | `{{speakers}}` | Comma-separated speaker names |
@@ -109,8 +112,24 @@ DOCX and PDF outputs use a template file with `{{field}}` markers — drop your 
 | `{{segments}}` | Timestamped segments, one per line |
 | `{{meeting_notes}}` | AI meeting notes (blank if not run) |
 | `{{word_count}}` | Total word count |
+| `{{source_hash}}` | SHA-256 hex digest of the source file |
+| `{{file_size_bytes}}` | Source file size in bytes |
+| `{{legal_transcript}}` | Line-numbered transcript (L0001 HH:MM:SS [Speaker] text) |
 
-Download the editable default templates from **Settings → Storage → Output templates**, customise them in Word or any HTML editor, then point the path back in Settings. The built-in default produces a clean, print-ready document without any configuration.
+Three ready-to-use templates available from **Settings → Storage → Output templates**:
+
+- **Default** — clean, print-ready document with metadata table and diarized transcript
+- **Legal** — formal chain-of-custody layout: line-numbered (`L0001`…), SHA-256 provenance block, page numbers, Courier font
+- Both are editable DOCX/HTML files — customise in Word or any text editor, point the path back in Settings
+
+### Transcript viewer
+Click any completed job in the Transcribe queue to open the built-in document viewer:
+
+- **Provenance block** — source file, full path, SHA-256 hash, file size, duration, transcription date and model
+- **Line-numbered transcript** — `L0001` citation numbers, timestamps, speaker labels, pause markers
+- **Search** — filter lines in real time; matching lines highlighted
+- **Copy** — copies visible lines (filtered or all) as plain text with line numbers
+- **Print** — `window.print()` with CSS that hides the app chrome and prints only the document
 
 ### AI integration
 Connect an LLM to unlock AI-assisted review (no AI required for core transcription):
@@ -219,6 +238,7 @@ POST   /jobs/{id}/cancel          Cancel
 POST   /jobs/{id}/move-up         Reorder in queue
 POST   /jobs/{id}/move-down       Reorder in queue
 GET    /jobs/{id}/transcript      Get transcript (?format=txt|srt|vtt)
+GET    /jobs/{id}/segments        Paged segments with source_metadata + SHA-256 (?offset&limit&include_words)
 
 GET    /worker/status             Running or paused
 POST   /worker/pause              Pause batch processing
@@ -245,6 +265,10 @@ GET    /config                    Read config
 POST   /config                    Update config fields
 GET    /info                      Platform, acceleration backend, versions
 POST   /storage/reveal            Open ~/.whisperapp in Finder/Explorer
+
+GET    /templates/download-docx         Download editable DOCX template
+GET    /templates/download-html         Download default HTML/PDF template
+GET    /templates/download-legal-html   Download legal chain-of-custody template
 ```
 
 ---
@@ -297,15 +321,18 @@ All settings live at `~/.whisperapp/config.json` — editable via the Settings U
 ## Development
 
 ```bash
-# Run the test suite (no GPU or HF token required)
-python -m pytest tests/ -q
-# Expected: 138 passed, 2 skipped
+# Run the unit + API test suite (no GPU or HF token required)
+python -m pytest tests/ -m "not browser and not integration" -q
+
+# Browser tests — drive a real Chromium instance against the running app
+# Requires: pip install pytest-playwright && playwright install chromium
+pytest tests/test_browser.py -m browser -v
 
 # Integration tests (downloads models, needs HF_TOKEN env var)
 HF_TOKEN=hf_... pytest tests/test_integration.py -v -m integration
 ```
 
-Tests cover: config, queue, worker, streaming, formatters, pause markers, acoustic analysis, emotion registry, model catalogue, speakers, server endpoints, and AI provider abstraction.
+Tests cover: config, queue, worker, streaming, formatters, pause markers, acoustic analysis, metadata + SHA-256 hashing, emotion registry, model catalogue, speakers, server endpoints (including segments + source_metadata), document formats, legal transcript generation, AI provider abstraction, and browser-driven UI tests (settings panel, transcript viewer, search, copy, print, keyboard shortcuts).
 
 ---
 

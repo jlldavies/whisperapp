@@ -492,3 +492,182 @@ async def test_catalogue_before_model_id_routing(app):
             r = await c.get("/models/catalogue")
     # Should hit catalogue endpoint, not model_id endpoint (which would 404)
     assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# GET /jobs/{id}/segments — source_metadata and pagination
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def segments_app(tmp_path):
+    """App with a job in speaker_review that has source_metadata + segments."""
+    from whisperapp.checkpoints import CheckpointManager
+    q = JobQueue(db_path=tmp_path / "jobs.db")
+    mock_worker = MagicMock()
+    app = create_app(queue=q, worker=mock_worker)
+
+    audio = tmp_path / "interview.mp3"
+    audio.write_bytes(b"fake audio")
+    job_id = q.create_job(str(audio), str(tmp_path), "large-v2", True, ["txt"])
+    q.update_progress(job_id, 85, "speaker_review")
+    q.set_status(job_id, JobStatus.SPEAKER_REVIEW)
+
+    cm = CheckpointManager(str(tmp_path), job_id)
+    cm.save("speaker_review", {
+        "segments": [
+            {"start": 0.0, "end": 2.0, "text": "Hello there", "speaker": "SPEAKER_00"},
+            {"start": 2.5, "end": 5.0, "text": "Hi indeed",   "speaker": "SPEAKER_01"},
+        ],
+        "source_metadata": {
+            "source_file": "interview.mp3",
+            "source_path": str(audio),
+            "source_hash": "abc123deadbeef",
+            "file_size_bytes": "10",
+            "duration": "00:05",
+        },
+    })
+    return app, q, job_id
+
+
+@pytest.mark.asyncio
+async def test_segments_returns_source_metadata(segments_app):
+    app, q, job_id = segments_app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.get(f"/jobs/{job_id}/segments")
+    assert r.status_code == 200
+    data = r.json()
+    assert "source_metadata" in data
+    assert data["source_metadata"]["source_hash"] == "abc123deadbeef"
+    assert data["source_metadata"]["source_file"] == "interview.mp3"
+
+
+@pytest.mark.asyncio
+async def test_segments_returns_all_segments(segments_app):
+    app, q, job_id = segments_app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.get(f"/jobs/{job_id}/segments")
+    data = r.json()
+    assert data["total"] == 2
+    assert len(data["segments"]) == 2
+    assert data["segments"][0]["text"] == "Hello there"
+    assert data["segments"][1]["speaker"] == "SPEAKER_01"
+
+
+@pytest.mark.asyncio
+async def test_segments_pagination(segments_app):
+    app, q, job_id = segments_app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.get(f"/jobs/{job_id}/segments?limit=1&offset=0")
+    data = r.json()
+    assert len(data["segments"]) == 1
+    assert data["segments"][0]["text"] == "Hello there"
+    assert data["next_offset"] == 1
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.get(f"/jobs/{job_id}/segments?limit=1&offset=1")
+    data = r.json()
+    assert len(data["segments"]) == 1
+    assert data["segments"][0]["text"] == "Hi indeed"
+    assert data["next_offset"] is None
+
+
+@pytest.mark.asyncio
+async def test_segments_strips_words_by_default(segments_app):
+    """Word-level timestamps should not appear unless include_words=true."""
+    from whisperapp.checkpoints import CheckpointManager
+    app, q, job_id = segments_app
+    # Re-save checkpoint with a words field
+    cm = CheckpointManager(str(q.get_job(job_id)["output_path"]), job_id)
+    cm.save("speaker_review", {
+        "segments": [
+            {"start": 0.0, "end": 2.0, "text": "Hello",
+             "speaker": "SPEAKER_00",
+             "words": [{"word": "Hello", "start": 0.0, "end": 0.5}]},
+        ],
+        "source_metadata": {"source_file": "f.mp3"},
+    })
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.get(f"/jobs/{job_id}/segments")
+    assert "words" not in r.json()["segments"][0]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.get(f"/jobs/{job_id}/segments?include_words=true")
+    assert "words" in r.json()["segments"][0]
+
+
+@pytest.mark.asyncio
+async def test_segments_wrong_status(app_and_queue, tmp_path):
+    app, q = app_and_queue
+    audio = tmp_path / "f.mp3"
+    audio.write_bytes(b"x")
+    job_id = q.create_job(str(audio), str(tmp_path), "large-v2", False, ["txt"])
+    # Job is queued — no transcript yet → 409
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.get(f"/jobs/{job_id}/segments")
+    assert r.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_segments_invalid_job_id(app_and_queue):
+    app, q = app_and_queue
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.get("/jobs/not-a-uuid/segments")
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_segments_not_found(app_and_queue):
+    app, q = app_and_queue
+    uid = "550e8400-e29b-41d4-a716-446655440000"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.get(f"/jobs/{uid}/segments")
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_segments_source_metadata_empty_when_absent(segments_app):
+    """source_metadata key is always present; empty dict if not stored."""
+    from whisperapp.checkpoints import CheckpointManager
+    app, q, job_id = segments_app
+    cm = CheckpointManager(str(q.get_job(job_id)["output_path"]), job_id)
+    cm.save("speaker_review", {
+        "segments": [{"start": 0.0, "end": 1.0, "text": "Hi", "speaker": "S0"}],
+        # no source_metadata key
+    })
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.get(f"/jobs/{job_id}/segments")
+    assert r.status_code == 200
+    assert r.json()["source_metadata"] == {}
+
+
+# ---------------------------------------------------------------------------
+# Template download endpoints
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_download_legal_html_template(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.get("/templates/download-legal-html")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    body = r.text
+    assert "{{source_hash}}" in body
+    assert "{{legal_block}}" in body
+
+
+@pytest.mark.asyncio
+async def test_download_default_html_template(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.get("/templates/download-html")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "{{transcript_block}}" in r.text
+
+
+@pytest.mark.asyncio
+async def test_templates_before_parameterised_routes(app):
+    """Both template endpoints must resolve before /jobs/{id} etc. (routing order)."""
+    for path in ("/templates/download-html", "/templates/download-legal-html"):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+            r = await c.get(path)
+        assert r.status_code == 200, f"{path} returned {r.status_code}"

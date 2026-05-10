@@ -346,6 +346,7 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
             "offset": offset,
             "limit": limit,
             "next_offset": offset + len(page) if offset + len(page) < total else None,
+            "source_metadata": result.get("source_metadata") or {},
             "segments": page,
         }
 
@@ -649,6 +650,18 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
             raise HTTPException(404, "Template not found")
         return FileResponse(str(html_path), media_type="text/html",
                             filename="whisperapp_pdf_template.html")
+
+    @app.get("/templates/download-legal-html")
+    async def download_legal_html_template():
+        """Return the legal HTML template for formal/chain-of-custody PDF output."""
+        from fastapi.responses import FileResponse
+        from whisperapp.document_formats import _PKG_TEMPLATES
+        html_path = _PKG_TEMPLATES / "legal.html"
+        if not html_path.exists():
+            from fastapi import HTTPException
+            raise HTTPException(404, "Template not found")
+        return FileResponse(str(html_path), media_type="text/html",
+                            filename="whisperapp_legal_template.html")
 
     # ── Startup registration (launch on login) ──────────────────────────────
 

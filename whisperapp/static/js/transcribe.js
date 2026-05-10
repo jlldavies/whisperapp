@@ -346,6 +346,11 @@ async function refreshQueue() {
         refreshQueue();
       });
     });
+    historyList.querySelectorAll('[data-view]').forEach(el => {
+      el.addEventListener('click', () => {
+        openTranscriptViewer(el.dataset.view, el.dataset.name || el.dataset.view);
+      });
+    });
   }
 }
 
@@ -392,17 +397,199 @@ function renderQueuedItem(j, isFirst, isLast) {
 }
 
 function renderHistoryItem(j) {
-  const icon = j.status === 'done' ? '✓' : j.status === 'failed' ? '✗' : '—';
-  const color = j.status === 'done' ? 'var(--signal-ok)' : j.status === 'failed' ? 'var(--signal-rec)' : 'var(--ink-4)';
+  const icon  = j.status === 'done' ? '✓' : j.status === 'failed' ? '✗' : '—';
+  const color = j.status === 'done' ? 'var(--signal-go)' : j.status === 'failed' ? 'var(--signal-rec)' : 'var(--ink-4)';
+  const name  = escHtml(j.file_name || j.file_path);
+  const viewAttrs = j.status === 'done'
+    ? ` data-view="${j.id}" data-name="${name}" style="cursor:pointer" title="View transcript"`
+    : '';
   return `
-    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3)">
+    <div class="history-item${j.status === 'done' ? ' history-item-done' : ''}"${viewAttrs}>
       <span style="color:${color};font-size:11px;width:12px;text-align:center;flex-shrink:0">${icon}</span>
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(j.file_name || j.file_path)}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
       <span class="mono" style="color:var(--ink-4);font-size:10.5px">${j.status}</span>
-      <button class="queue-remove-btn" data-delete="${j.id}" title="Remove" style="font-size:10px">✕</button>
+      <button class="queue-remove-btn" data-delete="${j.id}" title="Remove" style="font-size:10px" onclick="event.stopPropagation()">✕</button>
     </div>`;
 }
 
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Transcript Viewer ─────────────────────────────────────────────────────
+
+function openTranscriptViewer(jobId, fileName) {
+  document.getElementById('tx-viewer')?.remove();
+  document.getElementById('txv-print-css')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'tx-viewer';
+  overlay.innerHTML = `
+    <div id="txv-toolbar">
+      <button class="wa-btn" id="txv-close" style="flex-shrink:0">← Back</button>
+      <span id="txv-title" class="mono">${escHtml(String(fileName))}</span>
+      <div style="flex:1"></div>
+      <input type="search" id="txv-search" placeholder="Search…" autocomplete="off">
+      <button class="wa-btn" id="txv-copy">Copy</button>
+      <button class="wa-btn" id="txv-print">Print</button>
+    </div>
+    <div id="txv-body">
+      <div id="txv-loading" style="padding:40px;color:var(--ink-4);font-size:13px">Loading transcript…</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const printStyle = document.createElement('style');
+  printStyle.id = 'txv-print-css';
+  printStyle.textContent = `
+    @media print {
+      body > *:not(#tx-viewer) { display: none !important; }
+      #tx-viewer { position: static !important; overflow: visible !important; }
+      #txv-toolbar { display: none !important; }
+      #txv-body { overflow: visible !important; height: auto !important; padding: 0 !important; }
+      .txv-line { break-inside: avoid; }
+      .txv-rule { color: #000 !important; }
+    }
+  `;
+  document.head.appendChild(printStyle);
+
+  const escHandler = e => { if (e.key === 'Escape') closeTranscriptViewer(); };
+  document.addEventListener('keydown', escHandler);
+  overlay._escHandler = escHandler;
+
+  overlay.querySelector('#txv-close').addEventListener('click', closeTranscriptViewer);
+  overlay.querySelector('#txv-print').addEventListener('click', () => window.print());
+  overlay.querySelector('#txv-copy').addEventListener('click', copyViewerTranscript);
+  overlay.querySelector('#txv-search').addEventListener('input', e => {
+    filterViewerTranscript(e.target.value.toLowerCase().trim());
+  });
+
+  loadViewerContent(jobId);
+}
+
+function closeTranscriptViewer() {
+  const overlay = document.getElementById('tx-viewer');
+  if (overlay?._escHandler) document.removeEventListener('keydown', overlay._escHandler);
+  overlay?.remove();
+  document.getElementById('txv-print-css')?.remove();
+}
+
+async function loadViewerContent(jobId) {
+  try {
+    const segments = [];
+    let offset = 0;
+    let meta = null;
+    while (true) {
+      const data = await api.getSegments(jobId, offset, 500);
+      if (meta === null) meta = data.source_metadata || {};
+      segments.push(...(data.segments || []));
+      if (!data.next_offset) break;
+      offset = data.next_offset;
+    }
+    renderViewerContent(meta, segments);
+  } catch (err) {
+    const el = document.getElementById('txv-loading');
+    if (el) el.textContent = 'Could not load transcript: ' + err.message;
+  }
+}
+
+function renderViewerContent(meta, segments) {
+  const body = document.getElementById('txv-body');
+  if (!body) return;
+
+  const hash      = meta.source_hash    || '—';
+  const sizeRaw   = meta.file_size_bytes;
+  const sizeStr   = sizeRaw ? Number(sizeRaw).toLocaleString() + ' bytes' : '—';
+  const duration  = meta.duration       || '—';
+  const sourceFile = meta.source_file   || '—';
+  const sourcePath = meta.source_path   || '—';
+  const recorded  = meta.recorded_at || meta.file_modified || '—';
+  const now       = new Date().toLocaleString();
+
+  const provenanceHtml = `
+    <div id="txv-provenance">
+      <div class="txv-doc-title">Transcript of Audio Recording</div>
+      <div class="txv-meta-grid">
+        <span class="txv-ml">Source file</span> <span class="txv-mv">${escHtml(sourceFile)}</span>
+        <span class="txv-ml">Source path</span> <span class="txv-mv">${escHtml(sourcePath)}</span>
+        <span class="txv-ml">SHA-256</span>      <span class="txv-mv mono" style="word-break:break-all;font-size:11px">${escHtml(hash)}</span>
+        <span class="txv-ml">File size</span>    <span class="txv-mv">${escHtml(sizeStr)}</span>
+        <span class="txv-ml">Duration</span>     <span class="txv-mv">${escHtml(duration)}</span>
+        <span class="txv-ml">Recorded</span>     <span class="txv-mv">${escHtml(recorded)}</span>
+        <span class="txv-ml">Transcribed</span>  <span class="txv-mv">${escHtml(now)}</span>
+      </div>
+      <div class="txv-divider"></div>
+    </div>`;
+
+  let lineNum = 0;
+  const linesHtml = segments.map(seg => {
+    lineNum++;
+    const text    = (seg.text || '').trim();
+    const num     = 'L' + String(lineNum).padStart(4, '0');
+    const isPause = !!seg.is_pause_marker;
+    const speaker = seg.speaker || '';
+    const ts      = seg.start != null ? txvFmtTs(seg.start) : '';
+    const searchKey = escHtml((text + ' ' + speaker).toLowerCase());
+
+    if (isPause) {
+      return `<div class="txv-line txv-pause" data-text="${escHtml(text.toLowerCase())}">
+        <span class="txv-ln">${num}</span>
+        <span class="txv-ts"></span>
+        <span class="txv-sp"></span>
+        <span class="txv-tx">${escHtml(text)}</span>
+      </div>`;
+    }
+    return `<div class="txv-line" data-text="${searchKey}">
+      <span class="txv-ln mono">${num}</span>
+      <span class="txv-ts mono">${escHtml(ts)}</span>
+      <span class="txv-sp">${escHtml(speaker)}</span>
+      <span class="txv-tx">${escHtml(text)}</span>
+    </div>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div id="txv-doc">
+      ${provenanceHtml}
+      <div id="txv-lines">${linesHtml}</div>
+      <div class="txv-footer">
+        <span>${escHtml(sourcePath)}</span>
+        <span>WhisperApp · SHA-256 ${escHtml(hash.slice(0, 16))}…</span>
+      </div>
+    </div>`;
+}
+
+function txvFmtTs(s) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  const pad = n => String(n).padStart(2, '0');
+  return h > 0 ? `${pad(h)}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+}
+
+function filterViewerTranscript(query) {
+  document.querySelectorAll('#txv-lines .txv-line').forEach(line => {
+    if (!query) {
+      line.hidden = false;
+      line.classList.remove('txv-match');
+    } else {
+      const match = (line.dataset.text || '').includes(query);
+      line.hidden = !match;
+      line.classList.toggle('txv-match', match);
+    }
+  });
+}
+
+function copyViewerTranscript() {
+  const lines = [...document.querySelectorAll('#txv-lines .txv-line')]
+    .filter(l => !l.hidden)
+    .map(l => {
+      const ln  = l.querySelector('.txv-ln')?.textContent  || '';
+      const ts  = l.querySelector('.txv-ts')?.textContent  || '';
+      const sp  = l.querySelector('.txv-sp')?.textContent  || '';
+      const tx  = l.querySelector('.txv-tx')?.textContent  || '';
+      return [ln, ts, sp, tx].filter(Boolean).join('  ');
+    });
+  navigator.clipboard.writeText(lines.join('\n')).catch(() => {});
+  const btn = document.getElementById('txv-copy');
+  if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy'; }, 1500); }
 }

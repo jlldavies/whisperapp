@@ -70,3 +70,7 @@ include = ["whisperapp*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "browser: browser-driven tests via Playwright (require live app on ports 7860/7861)",
+    "integration: integration tests that download models or need HF_TOKEN",
+]
