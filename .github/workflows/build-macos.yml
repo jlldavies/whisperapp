@@ -1,0 +1,66 @@
+name: Build macOS DMG
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:   # allow manual trigger for testing
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies
+        run: brew install portaudio create-dmg
+
+      - name: Install launcher dependencies (no torch/whisperx)
+        run: |
+          pip install ".[desktop]" pyinstaller
+
+      - name: Build .app bundle
+        run: pyinstaller whisperapp.spec --clean --noconfirm
+
+      - name: Set version from tag
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          else
+            echo "version=dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build DMG
+        run: |
+          create-dmg \
+            --volname "WhisperApp" \
+            --volicon "assets/icon.icns" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 128 \
+            --icon "WhisperApp.app" 150 185 \
+            --hide-extension "WhisperApp.app" \
+            --app-drop-link 450 185 \
+            --no-internet-enable \
+            "dist/WhisperApp-${{ steps.version.outputs.version }}.dmg" \
+            "dist/WhisperApp.app"
+
+      - name: Upload DMG to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/WhisperApp-${{ steps.version.outputs.version }}.dmg
+
+      - name: Upload DMG as artifact (non-release runs)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: WhisperApp-macos
+          path: dist/WhisperApp-*.dmg
+          retention-days: 7

@@ -605,7 +605,8 @@ function _actionCluster(m, catKey) {
     }
     return _mBtn('Remove','danger','sm',`data-remove-model="${escHtml(m.id)}"`);
   }
-  return _mBtn(isCap ? 'Install' : 'Download','default','sm',`data-download-model="${escHtml(m.id)}"`);
+  const sizeLabel = m.size ? ` · ${escHtml(m.size)}` : '';
+  return _mBtn(`${isCap ? 'Install' : 'Download'}${sizeLabel}`,'default','sm',`data-download-model="${escHtml(m.id)}"`);
 }
 
 function _libraryRowHtml(m, isLast, highlight, catKey) {
@@ -1143,7 +1144,7 @@ async function _renderEmotionLibrary(body, cfg) {
           </div>
           <div style="font-size:12px;color:var(--ink-3);margin-top:2px">${escHtml(m.description)}</div>
           <div class="mono" style="font-size:11px;color:var(--ink-4);margin-top:4px">
-            ${escHtml(m.size_mb)} MB &nbsp;·&nbsp; ${escHtml((m.labels || []).join(', '))}
+            ${_formatMB(m.size_mb || 0)} &nbsp;·&nbsp; ${escHtml((m.labels || []).join(', '))}
           </div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;min-width:120px">
@@ -1226,7 +1227,8 @@ function _modelActionHtml(m, cfg) {
         <button class="wa-btn wa-btn-danger" data-delete-model="${escHtml(m.id)}" style="font-size:11px;padding:4px 8px">Delete</button>
       </div>`;
   }
-  return `<button class="wa-btn wa-btn-primary" data-download="${escHtml(m.id)}" style="font-size:11px">Download</button>`;
+  const sz = m.size_mb ? ` · ${_formatMB(m.size_mb)}` : '';
+  return `<button class="wa-btn wa-btn-primary" data-download="${escHtml(m.id)}" style="font-size:11px">Download${sz}</button>`;
 }
 
 function _pollModelProgress(modelId, body, cfg) {
