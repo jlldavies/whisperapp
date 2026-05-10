@@ -18,25 +18,20 @@ dependencies = [
     # Uses Apple MLX framework (Neural Engine + GPU) for Whisper inference.
     # pip/uv skips this automatically on Windows, Linux, and Intel Mac.
     "mlx-whisper; sys_platform == 'darwin' and platform_machine == 'arm64'",
-    # UI and API
+    # API server and CLI
     "fastapi",
     "uvicorn[standard]",
-    "pystray",
-    "Pillow",
     "bleach",
     "httpx",
     "click",
     "requests",
-    "pyaudio",
     "soundfile",
     "psutil",
     "mutagen",
     # Acoustic analysis (volume / pitch / speaking-rate markers in transcripts).
-    # Pure DSP — no AI provider needed. The settings panel's master toggle is a
-    # no-op without this.
+    # Pure DSP — no AI provider needed.
     "librosa",
     # DOCX and PDF output formats with template support.
-    # python-docx generates Word documents; weasyprint converts HTML→PDF.
     "python-docx",
     "weasyprint",
     "pyobjc-framework-AVFoundation; sys_platform == 'darwin'",
@@ -47,13 +42,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Desktop app extras — tray icon, mic recording, browser launch.
+# Not needed for headless / Docker / server deployments.
+desktop = [
+    "pystray",
+    "Pillow",
+    "pyaudio",
+]
 # AI provider SDKs — install only what you need
 claude = ["anthropic>=0.25"]
 openai = ["openai>=1.0"]
 # Ollama uses requests (already a core dependency) — no extra package needed
 # Convenience bundles
 ai-all = ["anthropic>=0.25", "openai>=1.0"]
-dev = ["pytest", "pytest-asyncio"]
+# Development — includes desktop extras so the tray works during local dev
+dev = ["pytest", "pytest-asyncio", "pytest-playwright", "whisperapp[desktop]"]
 build = ["pyinstaller>=6.0"]
 
 [project.scripts]

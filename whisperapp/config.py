@@ -50,7 +50,10 @@ class Config:
 
     def __post_init__(self):
         if not self.default_output_path:
-            self.default_output_path = str(Path.home() / "Downloads")
+            # WHISPERAPP_OUTPUT_PATH lets Docker/headless deployments set the
+            # output directory via environment variable without touching config.
+            env_path = os.environ.get("WHISPERAPP_OUTPUT_PATH", "")
+            self.default_output_path = env_path or str(Path.home() / "Downloads")
         config_dir = _config_dir()
         config_dir.mkdir(parents=True, exist_ok=True)
         self._path = config_dir / "config.json"
@@ -61,6 +64,16 @@ class Config:
                     setattr(self, k, v)
         else:
             self.save()
+        # Environment variables override config file — useful for Docker/CI
+        # where secrets are injected via env rather than written to disk.
+        if os.environ.get("HF_TOKEN"):
+            self.hf_token = os.environ["HF_TOKEN"]
+        if os.environ.get("WHISPERAPP_AI_PROVIDER"):
+            self.ai_provider = os.environ["WHISPERAPP_AI_PROVIDER"]
+        if os.environ.get("WHISPERAPP_AI_API_KEY"):
+            self.ai_api_key = os.environ["WHISPERAPP_AI_API_KEY"]
+        if os.environ.get("WHISPERAPP_AI_MODEL"):
+            self.ai_model = os.environ["WHISPERAPP_AI_MODEL"]
 
     def save(self):
         data = {k: v for k, v in asdict(self).items() if not k.startswith("_")}

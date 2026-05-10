@@ -37,7 +37,7 @@ python -m whisperapp
 ```zsh
 brew install portaudio
 /opt/homebrew/bin/python3.13 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
+.venv/bin/pip install -e ".[desktop,dev]"
 ```
 
 ## Platform notes

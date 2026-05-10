@@ -1,0 +1,32 @@
+services:
+  whisperapp:
+    build: .
+    image: whisperapp:latest
+    ports:
+      - "7861:7861"
+    environment:
+      # Required for speaker diarization — free HuggingFace account
+      HF_TOKEN: ${HF_TOKEN}
+      # Optional — override defaults
+      # WHISPERAPP_OUTPUT_PATH: /data
+    volumes:
+      # Model weights — persisted so they survive container restarts
+      - whisperapp-models:/root/.cache
+      # Transcript output — mount a host path to retrieve files directly
+      - whisperapp-output:/data
+      # Config — persists HF token, model preferences, template paths
+      - whisperapp-config:/root/.whisperapp
+    restart: unless-stopped
+    # For NVIDIA GPU acceleration, uncomment:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  whisperapp-models:
+  whisperapp-output:
+  whisperapp-config:

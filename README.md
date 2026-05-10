@@ -149,7 +149,7 @@ Everything in the UI is also available via API (port 7861) and CLI — useful fo
 
 ## Quick start
 
-### macOS
+### macOS (desktop — tray icon + browser UI)
 
 ```zsh
 git clone --recurse-submodules https://github.com/jlldavies/whisperapp.git
@@ -157,13 +157,13 @@ cd whisperapp
 
 brew install portaudio
 python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
+.venv/bin/pip install -e ".[desktop,dev]"
 .venv/bin/python -m whisperapp
 ```
 
 Apple Silicon (M1/M2/M3/M4): `mlx-whisper` installs automatically — no CUDA needed, fast Metal inference.
 
-### Windows
+### Windows (desktop — tray icon + browser UI)
 
 ```powershell
 git clone --recurse-submodules https://github.com/jlldavies/whisperapp.git
@@ -171,7 +171,7 @@ cd whisperapp
 
 python -m venv .venv
 .venv\Scripts\activate
-pip install -e ".[dev]"
+pip install -e ".[desktop,dev]"
 python -m whisperapp
 ```
 
@@ -182,6 +182,38 @@ NVIDIA GPU auto-detected and used (float16). SSL certificates route through the 
 1. App starts in the system tray and opens **http://127.0.0.1:7860**
 2. Go to **Settings → Transcription** and enter your [HuggingFace token](https://huggingface.co/settings/tokens) — required for speaker diarization (free account)
 3. Drop a file on the **Transcribe** screen or hit **Live** to start recording
+
+### Docker / headless server
+
+Run WhisperApp as a pure API server — no tray icon, no browser required. Useful for automation pipelines, CI, or self-hosted transcription services.
+
+```bash
+# Quick start
+docker compose up
+
+# Or with an explicit HF token
+HF_TOKEN=hf_... docker compose up
+```
+
+```yaml
+# docker-compose.yml is included. Key environment variables:
+HF_TOKEN                  # HuggingFace token for diarization (required)
+WHISPERAPP_OUTPUT_PATH    # Where transcripts are written (default: /data)
+WHISPERAPP_AI_PROVIDER    # none | claude | openai | ollama
+WHISPERAPP_AI_API_KEY     # API key for the AI provider
+```
+
+The API is available at `http://localhost:7861` — same endpoints as the desktop version. Swagger docs at `/docs`. Models download on first use and persist in a named Docker volume.
+
+**CPU vs GPU:** The image ships with CPU-only PyTorch (smaller image, works everywhere). For GPU acceleration on a CUDA host, uncomment the `deploy.resources` block in `docker-compose.yml`.
+
+**Headless without Docker:** pass `--headless` or set `WHISPERAPP_HEADLESS=1` to run the API server directly from your Python install:
+
+```bash
+WHISPERAPP_HEADLESS=1 python -m whisperapp
+# or
+python -m whisperapp --headless --api-port 7861
+```
 
 ---
 
