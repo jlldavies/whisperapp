@@ -118,3 +118,59 @@ def test_worker_uses_module_device(mock_wx, _mock_mlx, setup):
     mock_wx.align.assert_called_once()
     _, kwargs = mock_wx.align.call_args
     assert kwargs["device"] == _DEVICE
+
+
+# ── Webhook security unit tests ────────────────────────────────────────────
+
+class TestWebhookHostAllowed:
+    def setup_method(self):
+        from whisperapp.worker import _webhook_host_allowed
+        self.check = _webhook_host_allowed
+
+    def test_loopback_ipv4_always_allowed(self):
+        assert self.check("http://127.0.0.1:9999/hook", [])
+
+    def test_loopback_ipv6_always_allowed(self):
+        assert self.check("http://[::1]/hook", [])
+
+    def test_localhost_always_allowed(self):
+        assert self.check("http://localhost/hook", [])
+
+    def test_external_blocked_by_default(self):
+        assert not self.check("http://example.com/hook", [])
+
+    def test_internal_network_blocked_by_default(self):
+        assert not self.check("http://10.0.0.1/hook", [])
+
+    def test_wildcard_allows_external(self):
+        assert self.check("http://example.com/hook", ["*"])
+
+    def test_explicit_allowlist_permits_host(self):
+        assert self.check("http://hooks.example.com/hook", ["hooks.example.com"])
+
+    def test_explicit_allowlist_blocks_other_host(self):
+        assert not self.check("http://evil.com/hook", ["hooks.example.com"])
+
+    def test_explicit_allowlist_still_allows_loopback(self):
+        assert self.check("http://127.0.0.1/hook", ["hooks.example.com"])
+
+    def test_missing_host_blocked(self):
+        assert not self.check("not-a-url", [])
+
+
+class TestWebhookSigning:
+    def test_signature_format(self):
+        from whisperapp.worker import _sign_payload
+        sig = _sign_payload(b'{"test":1}', "mysecret")
+        assert sig.startswith("sha256=")
+        assert len(sig) == 71  # sha256= + 64 hex chars
+
+    def test_same_payload_same_signature(self):
+        from whisperapp.worker import _sign_payload
+        body = b'{"event":"job.completed"}'
+        assert _sign_payload(body, "s") == _sign_payload(body, "s")
+
+    def test_different_secret_different_signature(self):
+        from whisperapp.worker import _sign_payload
+        body = b'{"event":"job.completed"}'
+        assert _sign_payload(body, "secret1") != _sign_payload(body, "secret2")

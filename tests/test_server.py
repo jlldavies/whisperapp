@@ -674,7 +674,29 @@ async def test_templates_before_parameterised_routes(app):
 
 
 @pytest.mark.asyncio
-async def test_transcribe_stores_callback_url(app_and_queue, tmp_path):
+async def test_transcribe_stores_loopback_callback_url(app_and_queue, tmp_path):
+    """Loopback callback URLs are always accepted regardless of config."""
+    app, queue = app_and_queue
+    audio = tmp_path / "x.mp3"
+    audio.write_bytes(b"\x00" * 100)
+    body = {
+        "file_path": str(audio),
+        "output_path": str(tmp_path),
+        "model": "base",
+        "diarize": False,
+        "formats": ["txt"],
+        "callback_url": "http://127.0.0.1:9999/hook",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+        r = await c.post("/transcribe", json=body)
+    assert r.status_code == 200
+    job = queue.get_job(r.json()["job_id"])
+    assert job["callback_url"] == "http://127.0.0.1:9999/hook"
+
+
+@pytest.mark.asyncio
+async def test_transcribe_external_callback_blocked_by_default(app_and_queue, tmp_path):
+    """External callback URLs are blocked unless webhook_allowed_hosts is configured."""
     app, queue = app_and_queue
     audio = tmp_path / "x.mp3"
     audio.write_bytes(b"\x00" * 100)
@@ -688,10 +710,8 @@ async def test_transcribe_stores_callback_url(app_and_queue, tmp_path):
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
         r = await c.post("/transcribe", json=body)
-    assert r.status_code == 200
-    job_id = r.json()["job_id"]
-    job = queue.get_job(job_id)
-    assert job["callback_url"] == "http://example.com/webhook"
+    assert r.status_code == 403
+    assert "webhook_allowed_hosts" in r.json()["detail"]
 
 
 @pytest.mark.asyncio

@@ -12,10 +12,51 @@ from whisperapp.checkpoints import CheckpointManager
 _log = logging.getLogger(__name__)
 
 
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _webhook_host_allowed(url: str, allowed_hosts: list) -> bool:
+    """
+    Guard against SSRF.
+
+    - Empty allowed_hosts list → loopback only.
+    - ["*"] → any host (operator opts in to permissionless mode).
+    - Otherwise, exact match against the list entries.
+    """
+    from urllib.parse import urlparse
+    host = urlparse(url).hostname or ""
+    if not host:
+        return False
+    if allowed_hosts == ["*"]:
+        return True
+    if not allowed_hosts:
+        return host in _LOOPBACK_HOSTS
+    return host in allowed_hosts or host in _LOOPBACK_HOSTS
+
+
+def _sign_payload(body: bytes, secret: str) -> str:
+    import hmac as _hmac
+    import hashlib
+    return "sha256=" + _hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
 def _fire_webhook(job: dict) -> None:
     url = job.get("callback_url")
     if not url:
         return
+
+    from whisperapp.config import Config as _Config
+    cfg = _Config()
+
+    if not _webhook_host_allowed(url, cfg.webhook_allowed_hosts):
+        _log.warning(
+            "Webhook to %s blocked — host not in webhook_allowed_hosts. "
+            "Set webhook_allowed_hosts=[\"*\"] in config to allow external hosts.",
+            url,
+        )
+        return
+
+    import json as _json
     import requests
     payload = {
         "event": "job.completed" if job["status"] == JobStatus.DONE else "job.failed",
@@ -28,8 +69,13 @@ def _fire_webhook(job: dict) -> None:
         "completed_at": job.get("completed_at"),
         "error": job.get("error"),
     }
+    body = _json.dumps(payload, separators=(",", ":")).encode()
+    headers = {
+        "Content-Type": "application/json",
+        "X-WhisperApp-Signature": _sign_payload(body, cfg.webhook_secret),
+    }
     try:
-        requests.post(url, json=payload, timeout=10)
+        requests.post(url, data=body, headers=headers, timeout=10)
     except Exception as exc:
         _log.warning("Webhook POST to %s failed: %s", url, exc)
 

@@ -165,6 +165,17 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
             model = sanitise_model(req.model)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
+        if req.callback_url:
+            from whisperapp.worker import _webhook_host_allowed
+            cfg = Config()
+            if not _webhook_host_allowed(req.callback_url, cfg.webhook_allowed_hosts):
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "callback_url host is not allowed. "
+                        "Set webhook_allowed_hosts in config to permit external hosts."
+                    ),
+                )
         job_id = queue.create_job(
             str(file_path), str(output_path),
             model, req.diarize, req.formats,

@@ -1,5 +1,6 @@
 import json
 import os
+import secrets
 from pathlib import Path
 from dataclasses import dataclass, asdict, field
 
@@ -47,6 +48,11 @@ class Config:
     # Output templates — blank = use bundled default
     output_template_docx: str = ""   # path to a .docx template file
     output_template_pdf: str = ""    # path to an .html template file
+    # Webhook security
+    # Empty list = loopback only (127.x, ::1, localhost). Use ["*"] to allow
+    # any host (permissionless). Explicit entries are exact hostname/IP matches.
+    webhook_allowed_hosts: list = field(default_factory=list)
+    webhook_secret: str = ""         # HMAC-SHA256 key; auto-generated on first run
 
     def __post_init__(self):
         if not self.default_output_path:
@@ -64,6 +70,10 @@ class Config:
                     setattr(self, k, v)
         else:
             self.save()
+        # Auto-generate webhook secret on first run so signing works immediately.
+        if not self.webhook_secret:
+            self.webhook_secret = secrets.token_hex(32)
+            self.save()
         # Environment variables override config file — useful for Docker/CI
         # where secrets are injected via env rather than written to disk.
         if os.environ.get("HF_TOKEN"):
@@ -74,6 +84,11 @@ class Config:
             self.ai_api_key = os.environ["WHISPERAPP_AI_API_KEY"]
         if os.environ.get("WHISPERAPP_AI_MODEL"):
             self.ai_model = os.environ["WHISPERAPP_AI_MODEL"]
+        if os.environ.get("WHISPERAPP_WEBHOOK_ALLOWED_HOSTS"):
+            raw = os.environ["WHISPERAPP_WEBHOOK_ALLOWED_HOSTS"]
+            self.webhook_allowed_hosts = [h.strip() for h in raw.split(",") if h.strip()]
+        if os.environ.get("WHISPERAPP_WEBHOOK_SECRET"):
+            self.webhook_secret = os.environ["WHISPERAPP_WEBHOOK_SECRET"]
 
     def save(self):
         data = {k: v for k, v in asdict(self).items() if not k.startswith("_")}

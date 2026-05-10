@@ -312,7 +312,7 @@ curl -X POST http://127.0.0.1:7861/transcribe \
   -H "Content-Type: application/json" \
   -d '{
     "file_path": "/path/to/audio.mp3",
-    "callback_url": "https://your-server.example.com/webhook"
+    "callback_url": "http://127.0.0.1:9000/my-hook"
   }'
 ```
 
@@ -333,6 +333,38 @@ The payload delivered to `callback_url` on completion or failure:
 ```
 
 `event` is `job.completed` for success or `job.failed` for errors. The POST is fire-and-forget — failures are logged but do not affect the job.
+
+#### Webhook security
+
+Every outgoing webhook is signed with HMAC-SHA256. The secret is auto-generated on first run and stored in `~/.whisperapp/config.json` as `webhook_secret`. Your receiver can verify authenticity:
+
+```python
+import hmac, hashlib
+
+def verify(body: bytes, header: str, secret: str) -> bool:
+    expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header)
+
+# header comes from X-WhisperApp-Signature on the incoming request
+```
+
+**SSRF protection** — by default WhisperApp only delivers webhooks to loopback addresses (`127.0.0.1`, `::1`, `localhost`). External callback URLs are rejected at submission time with HTTP 403. To allow external delivery, set `webhook_allowed_hosts` in config:
+
+| `webhook_allowed_hosts` value | Effect |
+|-------------------------------|--------|
+| `[]` *(default)* | Loopback only — safe for local automation |
+| `["hooks.myserver.com"]` | That host + loopback |
+| `["*"]` | Any host — permissionless, use when you control access another way |
+
+Via environment variable (Docker-friendly):
+
+```bash
+# Comma-separated; use * for any host
+WHISPERAPP_WEBHOOK_ALLOWED_HOSTS=hooks.myserver.com,10.0.1.5
+
+# Override the signing secret
+WHISPERAPP_WEBHOOK_SECRET=your-secret-here
+```
 
 ---
 
@@ -366,6 +398,8 @@ All settings live at `~/.whisperapp/config.json` — editable via the Settings U
 | `emotion_combine_with_ai` | `false` | AI synthesis of model outputs |
 | `output_template_docx` | `""` | Path to custom `.docx` template (blank = built-in default) |
 | `output_template_pdf` | `""` | Path to custom `.html` template for PDF (blank = built-in default) |
+| `webhook_allowed_hosts` | `[]` | Hosts that may receive webhooks — `[]` = loopback only, `["*"]` = any |
+| `webhook_secret` | *(auto)* | HMAC-SHA256 signing key — auto-generated on first run |
 
 ---
 

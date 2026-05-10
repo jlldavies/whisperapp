@@ -9,6 +9,9 @@ services:
       HF_TOKEN: ${HF_TOKEN}
       # Optional — override defaults
       # WHISPERAPP_OUTPUT_PATH: /data
+      # Webhook security — comma-separated hosts, or * for any; default loopback only
+      # WHISPERAPP_WEBHOOK_ALLOWED_HOSTS: "*"
+      # WHISPERAPP_WEBHOOK_SECRET: your-secret-here
     volumes:
       # Model weights — persisted so they survive container restarts
       - whisperapp-models:/root/.cache
