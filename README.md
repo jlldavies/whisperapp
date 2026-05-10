@@ -1,6 +1,6 @@
 # WhisperApp
 
-**App Wrapper for OpenAI Whisper with all the workflow, docker, cross-platform stability you want.  Design to extract documens for legal work, or capture live calls, with support for all models.
+**App Wrapper for OpenAI Whisper with all the workflow, docker, cross-platform stability you want. Designed to extract documents for legal work, or capture live calls, with support for all models.**
 
 **Local, private transcription for people who deal with a lot of audio.** Drop a folder of recordings, a day's worth of meetings, or hours of interview audio — WhisperApp queues them, processes them in the background, and gives you richly annotated transcripts with speaker names, silence markers, acoustic cues, and optional emotion analysis. Nothing leaves your machine.
 
