@@ -551,7 +551,15 @@ class Worker:
                 # Hook into pyannote's pipeline progress
                 _install_diarize_hook(
                     diarize_model, self.queue, job_id, hb)
-                diarize_segments = diarize_model(job["file_path"])
+                # Pass audio as a pre-loaded waveform dict so pyannote never
+                # needs to decode the file itself — avoids torchcodec /
+                # FFmpeg-shared-library dependency on Windows.
+                _audio_np = whisperx.load_audio(job["file_path"])
+                _waveform = torch.from_numpy(_audio_np).unsqueeze(0)  # (1, time)
+                diarize_segments = diarize_model(
+                    {"waveform": _waveform, "sample_rate": whisperx.audio.SAMPLE_RATE}
+                )
+                del _audio_np, _waveform
 
                 self.queue.update_progress(
                     job_id, _stage_progress("diarizing", 0.9),

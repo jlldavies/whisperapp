@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 from unittest.mock import patch, MagicMock, call
 from pathlib import Path
@@ -34,7 +35,7 @@ def test_worker_marks_job_running(mock_wx, _mock_mlx, setup):
     mock_model = MagicMock()
     mock_model.transcribe.return_value = {"segments": [], "language": "en"}
     mock_wx.load_model.return_value = mock_model
-    mock_wx.load_audio.return_value = MagicMock()
+    mock_wx.load_audio.return_value = np.zeros(16000, dtype=np.float32)
     mock_wx.load_align_model.return_value = (MagicMock(), MagicMock())
     mock_wx.align.return_value = {"segments": []}
     mock_wx.assign_word_speakers.return_value = {"segments": []}
@@ -55,7 +56,7 @@ def test_worker_saves_checkpoints(mock_wx, _mock_mlx, setup):
     mock_model = MagicMock()
     mock_model.transcribe.return_value = {"segments": [], "language": "en"}
     mock_wx.load_model.return_value = mock_model
-    mock_wx.load_audio.return_value = MagicMock()
+    mock_wx.load_audio.return_value = np.zeros(16000, dtype=np.float32)
     mock_wx.load_align_model.return_value = (MagicMock(), MagicMock())
     mock_wx.align.return_value = {"segments": []}
     mock_wx.assign_word_speakers.return_value = {"segments": []}
@@ -101,7 +102,7 @@ def test_worker_uses_module_device(mock_wx, _mock_mlx, setup):
     mock_model = MagicMock()
     mock_model.transcribe.return_value = {"segments": [], "language": "en"}
     mock_wx.load_model.return_value = mock_model
-    mock_wx.load_audio.return_value = MagicMock()
+    mock_wx.load_audio.return_value = np.zeros(16000, dtype=np.float32)
     mock_wx.load_align_model.return_value = (MagicMock(), MagicMock())
     mock_wx.align.return_value = {"segments": []}
     mock_wx.assign_word_speakers.return_value = {"segments": []}
