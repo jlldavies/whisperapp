@@ -4,6 +4,20 @@ import sys
 import threading
 import webbrowser
 
+# Windows: pythonw.exe has no console, so sys.stdout/stderr are None. The ML
+# import stack (torchcodec/torchaudio) emits warnings during import; writing
+# them to dead streams blocks startup and hangs the app before the server
+# starts. Give the process a real file-backed stream. Guarded so it is inert
+# on macOS and on any console run.
+if sys.platform == "win32" and sys.stderr is None:
+    _stdio_dir = os.path.join(os.path.expanduser("~"), ".whisperapp")
+    os.makedirs(_stdio_dir, exist_ok=True)
+    _stdio_log = open(
+        os.path.join(_stdio_dir, "pythonw-stdio.log"),
+        "a", buffering=1, encoding="utf-8", errors="replace",
+    )
+    sys.stdout = sys.stderr = _stdio_log
+
 # Windows: route Python's ssl through the Windows certificate store. This
 # fixes two problems in one go: (a) Python's bundled OpenSSL points at
 # non-existent /Common Files/SSL/ paths so vanilla HTTPS fails, and (b) TLS
@@ -62,13 +76,6 @@ def _configure_logging() -> None:
 
 
 def _pid_running(pid: int) -> bool:
-    if sys.platform == "win32":
-        import ctypes
-        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
-        if handle:
-            ctypes.windll.kernel32.CloseHandle(handle)
-            return True
-        return False
     try:
         os.kill(pid, 0)
         return True
@@ -78,7 +85,22 @@ def _pid_running(pid: int) -> bool:
         return True
 
 
+# Windows: named mutex held for the lifetime of the process.
+# Automatically released by the OS on crash/reboot — immune to PID reuse.
+_win_mutex = None
+
+
 def _acquire_instance_lock() -> bool:
+    global _win_mutex
+    if sys.platform == "win32":
+        import ctypes
+        _win_mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "WhisperApp_SingleInstance")
+        ERROR_ALREADY_EXISTS = 183
+        if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+            return False
+        return True
+
+    # Non-Windows: PID file (no PID-reuse risk in practice on POSIX)
     lock_file = _config_dir() / "whisperapp.pid"
     _config_dir().mkdir(parents=True, exist_ok=True)
     if lock_file.exists():
