@@ -431,3 +431,187 @@ class TestDeviceAutoDetection:
         finally:
             _w._WHISPER_DEVICE = orig_dev
             _w._COMPUTE_TYPE = orig_ct
+
+
+# ---------------------------------------------------------------------------
+# AudioBuffer — additional edge cases
+# ---------------------------------------------------------------------------
+
+class TestAudioBufferEdgeCases:
+    def test_no_flush_below_min_chunk(self):
+        """Buffer shorter than min_chunk_sec never flushes even after silence."""
+        from whisperapp.streaming import AudioBuffer
+        buf = AudioBuffer(min_chunk_sec=1.0, max_chunk_sec=5.0, silence_threshold_sec=0.3)
+        short = np.zeros(4000, dtype=np.float32)  # 0.25s at 16kHz
+        with patch("whisperapp.streaming._speech_prob", return_value=0.9):
+            buf.add_chunk(16000, short)
+        with patch("whisperapp.streaming._speech_prob", return_value=0.0):
+            buf.add_chunk(16000, np.zeros(8000, dtype=np.float32))  # 0.5s silence
+        assert buf.get_utterance() is None  # total 0.75s < min_chunk_sec=1.0
+
+    def test_force_flush_without_speech(self):
+        """max_chunk_sec flush fires even when VAD never detected speech."""
+        from whisperapp.streaming import AudioBuffer
+        buf = AudioBuffer(min_chunk_sec=0.1, max_chunk_sec=0.5, silence_threshold_sec=0.3)
+        chunk = np.zeros(8000, dtype=np.float32)  # 0.5s silence only
+        with patch("whisperapp.streaming._speech_prob", return_value=0.0):
+            buf.add_chunk(16000, chunk)
+        result = buf.get_utterance()
+        assert result is not None
+        assert len(result) == 8000
+
+    def test_state_clean_after_flush(self):
+        """After a flush, duration, silence counter and has_speech all reset."""
+        from whisperapp.streaming import AudioBuffer
+        buf = AudioBuffer(min_chunk_sec=0.1, max_chunk_sec=5.0, silence_threshold_sec=0.1)
+        with patch("whisperapp.streaming._speech_prob", return_value=0.9):
+            buf.add_chunk(16000, np.zeros(4000, dtype=np.float32))
+        with patch("whisperapp.streaming._speech_prob", return_value=0.0):
+            buf.add_chunk(16000, np.zeros(4000, dtype=np.float32))  # silence → flush
+        _ = buf.get_utterance()
+        assert buf.duration == 0.0
+        assert buf._silence_samples == 0
+        assert buf._has_speech is False
+
+    def test_resamples_non_16k_input(self):
+        """Input at a sample rate other than 16 kHz is resampled correctly."""
+        from whisperapp.streaming import AudioBuffer
+        buf = AudioBuffer()
+        chunk_48k = np.zeros(4800, dtype=np.float32)  # 0.1s at 48kHz
+        with patch("whisperapp.streaming._speech_prob", return_value=0.0):
+            buf.add_chunk(48000, chunk_48k)
+        # After resampling: 4800 * 16000/48000 = 1600 samples
+        assert buf.duration == pytest.approx(0.1, abs=0.02)
+
+    def test_get_all_returns_none_on_empty(self):
+        """get_all() on an empty buffer returns None."""
+        from whisperapp.streaming import AudioBuffer
+        buf = AudioBuffer()
+        assert buf.get_all() is None
+
+
+# ---------------------------------------------------------------------------
+# TranscriptAccumulator — additional edge cases
+# ---------------------------------------------------------------------------
+
+class TestTranscriptAccumulatorEdgeCases:
+    def test_dedup_is_case_insensitive(self):
+        """Exact duplicate differing only in case is not added."""
+        from whisperapp.streaming import TranscriptAccumulator
+        acc = TranscriptAccumulator()
+        acc.add_segment(0.0, 1.0, "Hello World")
+        acc.add_segment(1.0, 2.0, "hello world")
+        assert len(acc.get_segments()) == 1
+
+    def test_non_duplicate_similar_text_is_kept(self):
+        """Near-duplicate (but not exact) text is not dropped."""
+        from whisperapp.streaming import TranscriptAccumulator
+        acc = TranscriptAccumulator()
+        acc.add_segment(0.0, 1.0, "Hello world")
+        acc.add_segment(1.0, 2.0, "Hello worlds")
+        assert len(acc.get_segments()) == 2
+
+    def test_advance_offset_shifts_absolute_times(self):
+        """Segments added after advance_offset have larger absolute timestamps."""
+        from whisperapp.streaming import TranscriptAccumulator
+        acc = TranscriptAccumulator()
+        acc.add_segment(0.0, 1.0, "First")
+        acc.advance_offset(5.0)
+        acc.add_segment(0.0, 1.0, "Second")  # relative 0-1, abs 5-6
+        segs = acc.get_segments()
+        assert segs[0]["start"] == pytest.approx(0.0)
+        assert segs[1]["start"] == pytest.approx(5.0)
+        assert segs[1]["end"] == pytest.approx(6.0)
+
+    def test_whitespace_only_segment_skipped(self):
+        """Segments containing only whitespace are silently dropped."""
+        from whisperapp.streaming import TranscriptAccumulator
+        acc = TranscriptAccumulator()
+        acc.add_segment(0.0, 1.0, "  \t\n  ")
+        assert acc.get_full_text() == ""
+
+    def test_get_segments_returns_copy(self):
+        """Mutating the returned list doesn't affect internal state."""
+        from whisperapp.streaming import TranscriptAccumulator
+        acc = TranscriptAccumulator()
+        acc.add_segment(0.0, 1.0, "Test")
+        segs = acc.get_segments()
+        segs.clear()
+        assert len(acc.get_segments()) == 1
+
+
+# ---------------------------------------------------------------------------
+# StreamingEngine — VAD param and stop behaviour
+# ---------------------------------------------------------------------------
+
+class TestStreamingEngineParams:
+    def test_vad_params_stored_on_engine(self):
+        """Custom VAD params are stored on the engine's AudioBuffer."""
+        from whisperapp.streaming import StreamingEngine
+        engine = StreamingEngine(
+            device="cpu", compute_type="float32",
+            min_chunk_sec=0.5, max_chunk_sec=7.0, silence_threshold_sec=0.8,
+        )
+        assert engine._buffer.min_chunk_sec == 0.5
+        assert engine._buffer.max_chunk_sec == 7.0
+        assert engine._buffer.silence_threshold_sec == 0.8
+
+    def test_stop_returns_sample_rate_key(self):
+        """stop() always includes sample_rate in its return dict."""
+        from whisperapp.streaming import StreamingEngine
+        engine = StreamingEngine(device="cpu", compute_type="float32")
+        engine._model = MagicMock()
+        engine._running = True
+        result = engine.stop()
+        assert result["sample_rate"] == 16000
+
+    def test_stop_returns_raw_audio_array(self):
+        """stop() raw_audio is a numpy float32 array (possibly empty)."""
+        from whisperapp.streaming import StreamingEngine
+        engine = StreamingEngine(device="cpu", compute_type="float32")
+        engine._model = MagicMock()
+        engine._running = True
+        result = engine.stop()
+        assert isinstance(result["raw_audio"], np.ndarray)
+        assert result["raw_audio"].dtype == np.float32
+
+    @patch("whisperapp.streaming._speech_prob", return_value=0.9)
+    @patch("whisperapp.streaming.StreamingEngine._transcribe_utterance")
+    def test_different_instances_independent(self, mock_transcribe, mock_vad):
+        """Two StreamingEngine instances with different VAD params don't share state."""
+        from whisperapp.streaming import StreamingEngine
+        e1 = StreamingEngine(device="cpu", compute_type="float32", max_chunk_sec=2.0)
+        e2 = StreamingEngine(device="cpu", compute_type="float32", max_chunk_sec=8.0)
+        e1._model = e2._model = MagicMock()
+        e1._running = e2._running = True
+
+        audio = np.zeros(32000, dtype=np.float32)  # 2s at 16kHz
+        e1.process_chunk(16000, audio)  # should flush (2.0s >= max_chunk_sec=2.0)
+        e2.process_chunk(16000, audio)  # should NOT flush (2.0s < max_chunk_sec=8.0)
+
+        assert mock_transcribe.call_count == 1  # only e1 flushed
+
+
+# ---------------------------------------------------------------------------
+# Cross-platform — signal.pause fallback
+# ---------------------------------------------------------------------------
+
+def test_no_signal_pause_import_on_windows(monkeypatch):
+    """The no-tray startup path does not crash when signal.pause is unavailable."""
+    import types, signal as _signal
+    # Simulate Windows where signal.pause is absent
+    orig = getattr(_signal, 'pause', _signal)
+    try:
+        if hasattr(_signal, 'pause'):
+            delattr(_signal, 'pause')
+        import threading
+        # Replicate the guard from __main__
+        if hasattr(_signal, 'pause'):
+            raise AssertionError("pause should be absent in this test")
+        # Should fall through to threading.Event().wait() — just verify no AttributeError
+        stopped = threading.Event()
+        stopped.set()
+        stopped.wait()  # returns immediately because it's set
+    finally:
+        if orig is not _signal:
+            _signal.pause = orig

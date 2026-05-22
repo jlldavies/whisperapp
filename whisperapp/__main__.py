@@ -286,9 +286,14 @@ def main():
         if _tray_available:
             TrayApp(queue=queue, worker=worker, watcher=watcher).run()
         else:
-            # Keep the process alive without a tray
-            import signal
-            signal.pause()
+            # Keep the process alive without a tray.
+            # signal.pause() is Unix-only; use a threading.Event on Windows.
+            import signal as _sig
+            import threading as _threading
+            if hasattr(_sig, 'pause'):
+                _sig.pause()
+            else:
+                _threading.Event().wait()
 
 
 if __name__ == "__main__":

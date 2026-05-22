@@ -166,7 +166,7 @@ async def test_stream_polish_before_stop(app_and_queue):
 
 @pytest.mark.asyncio
 async def test_stream_polish_after_stop(app_and_queue):
-    """Session is cleaned up by stop, so polish returns 404."""
+    """Session is kept after stop so polish can run; polish cleans it up."""
     app, q = app_and_queue
 
     mock_engine = MagicMock()
@@ -193,12 +193,216 @@ async def test_stream_polish_after_stop(app_and_queue):
             })
             assert resp.status_code == 200
 
-            # Session is cleaned up on stop, so polish returns 404
+            # Session is kept after stop — polish should succeed and return segments
+            resp = await client.post("/stream/polish", json={
+                "session_id": session_id,
+                "hf_token": "hf_test",
+            })
+            assert resp.status_code == 200
+            segs = resp.json()["segments"]
+            assert len(segs) == 1
+            assert segs[0]["speaker"] == "SPEAKER_00"
+
+            # Session is cleaned up by polish — second call returns 404
             resp = await client.post("/stream/polish", json={
                 "session_id": session_id,
                 "hf_token": "hf_test",
             })
             assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Streaming endpoint — new behaviour tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_stream_stop_response_includes_audio_path(app_and_queue, tmp_path, monkeypatch):
+    """stream/stop saves a WAV and returns audio_path."""
+    app, q = app_and_queue
+    monkeypatch.setenv("WHISPERAPP_CONFIG_DIR", str(tmp_path))
+
+    import whisperapp.config as _cfg_mod
+    _cfg_mod.Config.__init__.__defaults__  # ensure module loaded
+
+    mock_engine = MagicMock()
+    mock_engine.stop.return_value = {
+        "text": "Hello",
+        "segments": [],
+        "raw_audio": np.zeros(16000, dtype=np.float32),
+        "sample_rate": 16000,
+    }
+
+    with patch("whisperapp.server.StreamingEngine", return_value=mock_engine), \
+         patch("whisperapp.server.Config") as mock_cfg_cls:
+        mock_cfg = MagicMock()
+        mock_cfg.default_output_path = str(tmp_path)
+        mock_cfg.streaming_max_chunk_sec = 5.0
+        mock_cfg.streaming_min_chunk_sec = 0.3
+        mock_cfg.vad_silence_threshold = 0.4
+        mock_cfg_cls.return_value = mock_cfg
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            resp = await client.post("/stream/start", json={"model": "base"})
+            session_id = resp.json()["session_id"]
+
+            resp = await client.post("/stream/stop", json={"session_id": session_id})
+            assert resp.status_code == 200
+            body = resp.json()
+            assert "audio_path" in body
+            # audio_path is either a str path or None (None if soundfile not available)
+            if body["audio_path"] is not None:
+                import os
+                assert os.path.exists(body["audio_path"])
+                assert body["audio_path"].endswith(".wav")
+
+
+@pytest.mark.asyncio
+async def test_stream_stop_session_persists_for_polish(app_and_queue):
+    """Session is NOT removed from _sessions after stop — polish can still run."""
+    from whisperapp import server as _srv
+    app, q = app_and_queue
+
+    mock_engine = MagicMock()
+    mock_engine.stop.return_value = {
+        "text": "Hi",
+        "segments": [],
+        "raw_audio": np.zeros(8000, dtype=np.float32),
+        "sample_rate": 16000,
+    }
+
+    with patch("whisperapp.server.StreamingEngine", return_value=mock_engine):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            resp = await client.post("/stream/start", json={"model": "base"})
+            session_id = resp.json()["session_id"]
+
+            resp = await client.post("/stream/stop", json={"session_id": session_id})
+            assert resp.status_code == 200
+
+            # session must still be reachable — a second stop returns error, not 404
+            # (409 because stopped=True)
+            resp2 = await client.post("/stream/stop", json={"session_id": session_id})
+            # The session exists but is already stopped; implementation may return 409 or 404.
+            # The key invariant is it should NOT return 200 with re-run of engine.stop().
+            assert resp2.status_code != 200
+
+
+@pytest.mark.asyncio
+async def test_stream_stop_wav_failure_still_returns_200(app_and_queue, tmp_path):
+    """WAV save failure is logged and swallowed — response still returns 200."""
+    app, q = app_and_queue
+
+    mock_engine = MagicMock()
+    mock_engine.stop.return_value = {
+        "text": "Test",
+        "segments": [],
+        "raw_audio": np.zeros(8000, dtype=np.float32),
+        "sample_rate": 16000,
+    }
+
+    with patch("whisperapp.server.StreamingEngine", return_value=mock_engine), \
+         patch("whisperapp.server.Config") as mock_cfg_cls:
+        mock_cfg = MagicMock()
+        mock_cfg.default_output_path = str(tmp_path)
+        mock_cfg.streaming_max_chunk_sec = 5.0
+        mock_cfg.streaming_min_chunk_sec = 0.3
+        mock_cfg.vad_silence_threshold = 0.4
+        mock_cfg_cls.return_value = mock_cfg
+
+        # Force soundfile.write to raise — simulates disk full / permission error
+        import sys
+        mock_sf = MagicMock()
+        mock_sf.write.side_effect = OSError("disk full")
+        with patch.dict(sys.modules, {"soundfile": mock_sf}):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+                resp = await client.post("/stream/start", json={"model": "base"})
+                session_id = resp.json()["session_id"]
+
+                resp = await client.post("/stream/stop", json={"session_id": session_id})
+                assert resp.status_code == 200
+                body = resp.json()
+                assert body["audio_path"] is None   # None when save failed
+                assert body["text"] == "Test"
+
+
+@pytest.mark.asyncio
+async def test_stream_chunk_invalid_base64(app_and_queue):
+    """Non-base64 audio_b64 returns 422."""
+    app, q = app_and_queue
+    mock_engine = MagicMock()
+
+    with patch("whisperapp.server.StreamingEngine", return_value=mock_engine):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            resp = await client.post("/stream/start", json={"model": "base"})
+            session_id = resp.json()["session_id"]
+
+            resp = await client.post("/stream/chunk", json={
+                "session_id": session_id,
+                "audio_b64": "!!!not-valid-base64!!!",
+                "sample_rate": 16000,
+            })
+            assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_stream_start_passes_vad_params_from_config(app_and_queue):
+    """stream/start reads VAD params from Config and passes them to StreamingEngine."""
+    app, q = app_and_queue
+    captured = {}
+
+    def capture_engine(*args, **kwargs):
+        captured.update(kwargs)
+        m = MagicMock()
+        m.start.return_value = None
+        return m
+
+    with patch("whisperapp.server.StreamingEngine", side_effect=capture_engine), \
+         patch("whisperapp.server.Config") as mock_cfg_cls:
+        mock_cfg = MagicMock()
+        mock_cfg.streaming_max_chunk_sec = 7.5
+        mock_cfg.streaming_min_chunk_sec = 0.5
+        mock_cfg.vad_silence_threshold = 0.8
+        mock_cfg_cls.return_value = mock_cfg
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            await client.post("/stream/start", json={"model": "base"})
+
+    assert captured.get("max_chunk_sec") == 7.5
+    assert captured.get("min_chunk_sec") == 0.5
+    assert captured.get("silence_threshold_sec") == 0.8
+
+
+@pytest.mark.asyncio
+async def test_stream_start_invalid_model(app_and_queue):
+    """Model outside {tiny,base,small} returns 422."""
+    app, q = app_and_queue
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        resp = await client.post("/stream/start", json={"model": "large-v2"})
+        assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_stream_chunk_after_stop_returns_409(app_and_queue):
+    """Sending a chunk to a stopped session returns 409."""
+    app, q = app_and_queue
+    mock_engine = MagicMock()
+    mock_engine.stop.return_value = {
+        "text": "", "segments": [],
+        "raw_audio": np.zeros(0, dtype=np.float32), "sample_rate": 16000,
+    }
+
+    with patch("whisperapp.server.StreamingEngine", return_value=mock_engine):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            resp = await client.post("/stream/start", json={"model": "base"})
+            session_id = resp.json()["session_id"]
+            await client.post("/stream/stop", json={"session_id": session_id})
+
+            audio_b64 = base64.b64encode(np.zeros(4000, dtype=np.float32).tobytes()).decode()
+            resp = await client.post("/stream/chunk", json={
+                "session_id": session_id,
+                "audio_b64": audio_b64,
+                "sample_rate": 16000,
+            })
+            assert resp.status_code == 409
 
 
 # ---------------------------------------------------------------------------

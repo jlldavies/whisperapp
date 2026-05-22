@@ -145,6 +145,34 @@ function renderTranscription(body, cfg) {
     </section>
     <section class="settings-section">
       <header class="settings-section-head">
+        <h2>Live transcription</h2>
+        <span class="wa-card-sub mono">VAD chunk timing</span>
+      </header>
+      <p style="font-size:12.5px;color:var(--ink-3);line-height:1.5">
+        Controls how quickly speech is segmented and sent for transcription during live recording.
+        Shorter values give faster feedback; larger values give better accuracy on long sentences.
+      </p>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+        ${field('Max chunk (s)',
+          `<input class="wa-input" type="number" min="1" max="30" step="0.5"
+             data-cfg="streaming_max_chunk_sec" value="${escHtml(cfg.streaming_max_chunk_sec ?? 5.0)}">`,
+          'Force-flush after this many seconds (default 5)'
+        )}
+        ${field('Min chunk (s)',
+          `<input class="wa-input" type="number" min="0.1" max="5" step="0.1"
+             data-cfg="streaming_min_chunk_sec" value="${escHtml(cfg.streaming_min_chunk_sec ?? 0.3)}">`,
+          'Minimum buffer before utterance check (default 0.3)'
+        )}
+        ${field('Silence gate (s)',
+          `<input class="wa-input" type="number" min="0.1" max="3" step="0.1"
+             data-cfg="vad_silence_threshold" value="${escHtml(cfg.vad_silence_threshold ?? 0.4)}">`,
+          'Silence after speech triggers flush (default 0.4)'
+        )}
+      </div>
+      ${toggleRow('Show "Listening…" indicator while waiting for first word', cfg.streaming_show_listening !== false, 'streaming_show_listening')}
+    </section>
+    <section class="settings-section">
+      <header class="settings-section-head">
         <h2>Pauses</h2>
         <span class="wa-card-sub mono">Silence markers in transcripts</span>
       </header>

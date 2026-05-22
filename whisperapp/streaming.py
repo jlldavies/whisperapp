@@ -43,7 +43,7 @@ def _speech_prob(audio_16k: np.ndarray) -> float:
     # Silero VAD requires exactly 512 samples per call at 16 kHz
     for i in range(0, len(audio_16k) - 511, 512):
         window = torch.from_numpy(audio_16k[i:i + 512]).float()
-        prob = float(vad(window, 16000))
+        prob = float(vad(window, 16000).detach())
         if prob > max_prob:
             max_prob = prob
     return max_prob
@@ -105,8 +105,10 @@ class AudioBuffer:
         duration = self._buf_samples / self.target_sr
         silence_dur = self._silence_samples / self.target_sr
 
-        # Force flush if max buffer reached
-        if duration >= self.max_chunk_sec and self._has_speech:
+        # Force flush if max buffer reached — even if VAD never detected speech,
+        # so audio doesn't accumulate unboundedly and crash on stop.
+        if duration >= self.max_chunk_sec:
+            logger.debug("AudioBuffer force-flush at %.2fs (max_chunk_sec=%.1f)", duration, self.max_chunk_sec)
             return self._flush()
 
         # Silence after speech → utterance complete
@@ -115,6 +117,7 @@ class AudioBuffer:
             and silence_dur >= self.silence_threshold_sec
             and duration >= self.min_chunk_sec
         ):
+            logger.debug("AudioBuffer utterance boundary: %.2fs audio, %.2fs silence", duration, silence_dur)
             return self._flush()
 
         return None
@@ -268,6 +271,8 @@ class StreamingEngine:
 
     def _transcribe_utterance(self, audio_16k: np.ndarray) -> str:
         """Transcribe a single utterance buffer with faster-whisper."""
+        duration = len(audio_16k) / 16000
+        logger.debug("Transcribing utterance %.2fs", duration)
         segments, _info = self._model.transcribe(
             audio_16k,
             beam_size=1,
@@ -281,13 +286,17 @@ class StreamingEngine:
             new_text_parts.append(seg.text.strip())
 
         # Advance offset by utterance duration
-        self._accumulator.advance_offset(len(audio_16k) / 16000)
+        self._accumulator.advance_offset(duration)
 
-        return " ".join(new_text_parts) if new_text_parts else None
+        text = " ".join(new_text_parts) if new_text_parts else None
+        if text:
+            logger.debug("Utterance transcribed: %r", text[:120])
+        return text
 
     def stop(self) -> dict:
         """Stop streaming, flush remaining audio, return final transcript + raw audio."""
         self._running = False
+        logger.info("StreamingEngine stopping — flushing remaining buffer")
 
         # Flush any remaining buffered audio
         remaining = self._buffer.get_all()
@@ -301,9 +310,13 @@ class StreamingEngine:
             else np.array([], dtype=np.float32)
         )
 
+        text = self._accumulator.get_full_text()
+        segs = self._accumulator.get_segments()
+        logger.info("StreamingEngine stopped: %d segments, %d words, %.1fs audio",
+                    len(segs), len(text.split()) if text else 0, len(raw_audio) / 16000)
         return {
-            "text": self._accumulator.get_full_text(),
-            "segments": self._accumulator.get_segments(),
+            "text": text,
+            "segments": segs,
             "raw_audio": raw_audio,
             "sample_rate": 16000,
         }
@@ -340,6 +353,7 @@ class StreamingEngine:
 
         raw_audio = np.concatenate(self._all_audio)
         duration_sec = len(raw_audio) / 16000
+        logger.info("StreamingEngine.polish: %.1fs audio on %s", duration_sec, self.device)
         _progress("preparing", f"{duration_sec:.0f}s of audio on {self.device}")
 
         import whisperx

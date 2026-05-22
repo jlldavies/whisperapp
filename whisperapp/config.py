@@ -17,8 +17,10 @@ class Config:
     default_output_path: str = ""
     diarize_by_default: bool = True
     streaming_model: str = "base"
-    vad_silence_threshold: float = 0.6
-    streaming_max_chunk_sec: float = 10.0
+    vad_silence_threshold: float = 0.4
+    streaming_max_chunk_sec: float = 5.0
+    streaming_min_chunk_sec: float = 0.3
+    streaming_show_listening: bool = True
     # AI provider settings
     ai_provider: str = "none"        # none | claude | openai | ollama
     ai_api_key: str = ""

@@ -23,8 +23,10 @@ def test_streaming_config_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("WHISPERAPP_CONFIG_DIR", str(tmp_path))
     cfg = Config()
     assert cfg.streaming_model == "base"
-    assert cfg.vad_silence_threshold == 0.6
-    assert cfg.streaming_max_chunk_sec == 10.0
+    assert cfg.vad_silence_threshold == 0.4
+    assert cfg.streaming_max_chunk_sec == 5.0
+    assert cfg.streaming_min_chunk_sec == 0.3
+    assert cfg.streaming_show_listening is True
 
 def test_pause_detection_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("WHISPERAPP_CONFIG_DIR", str(tmp_path))

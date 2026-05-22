@@ -2,12 +2,17 @@ from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from typing import Optional, List
+import asyncio
 import base64
+import datetime
 import json
+import logging
 import sys
 import uuid
 import shutil
 import numpy as np
+
+logger = logging.getLogger(__name__)
 from whisperapp.queue import JobQueue, JobStatus
 from whisperapp.checkpoints import CheckpointManager
 from whisperapp.sanitise import (sanitise_file_path, sanitise_output_path,
@@ -141,7 +146,7 @@ def create_setup_app(on_restart=None) -> FastAPI:
     @app.post("/setup/restart")
     async def setup_restart():
         if on_restart:
-            asyncio.get_event_loop().call_later(0.5, on_restart)
+            asyncio.get_running_loop().call_later(0.5, on_restart)
         return {"ok": True}
 
     @app.post("/setup/save-token")
@@ -581,8 +586,22 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
     @app.post("/stream/start")
     async def stream_start(req: StreamStartRequest):
         session_id = str(uuid.uuid4())
-        engine = StreamingEngine(model_size=req.model)
-        engine.start()
+        cfg = Config()
+        engine = StreamingEngine(
+            model_size=req.model,
+            max_chunk_sec=cfg.streaming_max_chunk_sec,
+            min_chunk_sec=cfg.streaming_min_chunk_sec,
+            silence_threshold_sec=cfg.vad_silence_threshold,
+        )
+        logger.info(
+            "stream/start session=%s model=%s max_chunk=%.1fs min_chunk=%.1fs silence=%.1fs",
+            session_id, req.model,
+            cfg.streaming_max_chunk_sec, cfg.streaming_min_chunk_sec, cfg.vad_silence_threshold,
+        )
+        # engine.start() loads faster-whisper + may download the model — run in
+        # a thread so the asyncio event loop isn't blocked.
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, engine.start)
         _sessions[session_id] = {
             "engine": engine,
             "sample_rate": req.sample_rate,
@@ -605,7 +624,14 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Invalid audio data: {e}")
 
-        new_text = session["engine"].process_chunk(req.sample_rate, audio)
+        # process_chunk runs Silero VAD + faster-whisper — both are blocking CPU
+        # work that must not run on the asyncio event loop thread.
+        loop = asyncio.get_running_loop()
+        new_text = await loop.run_in_executor(
+            None, session["engine"].process_chunk, req.sample_rate, audio
+        )
+        if new_text:
+            logger.debug("stream/chunk session=%s utterance=%r", req.session_id, new_text[:80])
         return {
             "new_text": new_text,
             "transcript": session["engine"].get_transcript(),
@@ -616,13 +642,36 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         session = _sessions.get(req.session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
+        if session["stopped"]:
+            raise HTTPException(status_code=409, detail="Session already stopped")
 
-        result = session["engine"].stop()
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, session["engine"].stop)
         session["stopped"] = True
-        _sessions.pop(req.session_id, None)
+        # Keep session alive so /stream/polish can still access the raw audio.
+        # Cleaned up by stream_polish or left to GC on server restart.
+
+        # Save raw audio as WAV alongside transcripts
+        audio_path = None
+        try:
+            import soundfile as sf
+            _cfg = Config()
+            out_dir = Path(_cfg.default_output_path)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            wav_path = out_dir / f"live_{ts}.wav"
+            sf.write(str(wav_path), result["raw_audio"], result["sample_rate"])
+            audio_path = str(wav_path)
+            logger.info("stream/stop session=%s wav=%s words=%d",
+                        req.session_id, wav_path.name,
+                        len(result["text"].split()) if result["text"] else 0)
+        except Exception as exc:
+            logger.warning("stream/stop session=%s wav save failed: %s", req.session_id, exc)
+
         return {
             "text": result["text"],
             "segments": result["segments"],
+            "audio_path": audio_path,
         }
 
     @app.post("/stream/polish")
@@ -633,10 +682,18 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         if not session["stopped"]:
             raise HTTPException(status_code=409, detail="Stop session before polishing")
 
-        polished = session["engine"].polish(req.hf_token)
+        logger.info("stream/polish session=%s hf_token=%s",
+                    req.session_id, "set" if req.hf_token else "not set")
+        # polish() runs WhisperX + pyannote — very slow, must not block event loop
+        loop = asyncio.get_running_loop()
+        polished = await loop.run_in_executor(
+            None, lambda: session["engine"].polish(req.hf_token or "")
+        )
 
         # Clean up session after polish
-        del _sessions[req.session_id]
+        _sessions.pop(req.session_id, None)
+        logger.info("stream/polish session=%s complete segments=%d",
+                    req.session_id, len(polished.get("segments", [])))
 
         return {
             "segments": polished.get("segments", []),
@@ -858,6 +915,10 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
             "default_output_path": cfg.default_output_path,
             "diarize_by_default": cfg.diarize_by_default,
             "streaming_model": cfg.streaming_model,
+            "vad_silence_threshold": cfg.vad_silence_threshold,
+            "streaming_max_chunk_sec": cfg.streaming_max_chunk_sec,
+            "streaming_min_chunk_sec": cfg.streaming_min_chunk_sec,
+            "streaming_show_listening": cfg.streaming_show_listening,
             "ai_provider": cfg.ai_provider,
             "ai_api_key": cfg.ai_api_key,
             "ai_model": cfg.ai_model,
@@ -890,6 +951,8 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         allowed = {
             "hf_token", "default_model", "default_output_path",
             "diarize_by_default", "streaming_model",
+            "vad_silence_threshold", "streaming_max_chunk_sec",
+            "streaming_min_chunk_sec", "streaming_show_listening",
             "ai_provider", "ai_api_key", "ai_model", "ai_base_url",
             "auto_update",
             "pause_detection", "pause_threshold",
