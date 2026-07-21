@@ -1,61 +1,127 @@
-# WhisperApp — Claude Code Instructions
+# WhisperApp - Claude Code Instructions
 
-Last reviewed: 2026-07-02
+Last reviewed: 2026-07-21
 
-## Project
-Local speech transcription with speaker diarization. Cross-platform (Windows + macOS).
-See README.md for full feature overview.
+Local speech transcription with speaker diarization. Cross-platform (Windows + macOS +
+Linux). Ships a web UI, a system-tray app, a CLI and a REST API around a whisperx /
+pyannote pipeline, with an Apple Silicon fast path via mlx-whisper. See README.md for the
+full feature overview.
 
-## Key files
-- `whisperapp/` — main package
-- `tests/` — pytest suite
-- `COMMS.md` — **cross-machine coordination file** (Windows ↔ Mac via Dropbox)
-- `mcp.json` — the app's **own REST tool manifest** (transport/url/tools for its API on :7861).
-  It is **not** a Claude MCP config — do not register it in `.mcp.json`/desktop config as-is.
+## Commands
 
-## Cross-machine debugging
-When working across Windows and Mac simultaneously, both Claude sessions communicate
-via `COMMS.md` in this directory. It syncs via Dropbox.
-- Read it at the start of any session
-- Append status updates under the STATUS LOG section
-- Format: `[MACHINE -> MACHINE] date: message`
+Run the full app (web UI + system tray):
 
-## Running tests
 ```bash
-python -m pytest tests/ -q
-```
-The whole suite must pass (skips are fine, failures are not). Coverage is the default —
-a reduced run is an explicit, logged opt-in; run and record the full suite before declaring done.
-
-## Running the app
-**Windows:**
-```bash
+# Windows
 python -m whisperapp
 ```
 
-**Mac (after install):**
 ```zsh
+# Mac (after install)
 .venv/bin/python -m whisperapp
 ```
 
-## Mac install (first time)
-```zsh
-brew install portaudio
-/opt/homebrew/bin/python3.13 -m venv .venv
-.venv/bin/pip install -e ".[desktop,dev]"
+Run the headless CLI (talks to a running daemon over REST):
+
+```bash
+whisperapp            # entry point: whisperapp.cli:main
 ```
 
-## Platform notes
-- Windows: tray icon appears in notification area (bottom-right)
-- macOS: icon appears in menu bar (top-right) — requires `rumps` (installed with pystray)
-- Apple Silicon: mlx-whisper installs automatically for fast GPU transcription
-- CUDA on Windows/Linux: detected automatically, uses float16
+Run the test suite:
 
-## Ports
-- Web UI: http://127.0.0.1:7860
-- REST API / health: http://127.0.0.1:7861
+```bash
+python -m pytest tests/ -q
+```
+
+## Architecture
+
+The `whisperapp` package is the whole application. A worker loads a Whisper backend
+(whisperx on CPU/CUDA, mlx-whisper on Apple Silicon) plus pyannote for diarization, and
+serves three front ends over one process:
+
+- `server.py` - FastAPI app exposing the web UI and the REST API.
+- `ui.py` / `static/` / `templates/` - the browser UI (served on port 7860).
+- `tray.py` - the system-tray / menu-bar app (pystray, plus rumps on macOS).
+- `cli.py` - the headless CLI that drives a running daemon via REST.
+
+Supporting modules: `worker.py` and `queue.py` (job execution), `streaming.py` (live
+transcription), `speakers.py` (diarization), `acoustic.py` / `pauses.py` / `emotion.py`
+(volume, pitch, speaking-rate and emotion markers), `document_formats.py` and
+`formatters.py` (DOCX / PDF / text export), `ai.py` (optional Claude / OpenAI / Ollama
+post-processing), `model_registry.py` and `checkpoints.py` (model selection and caching),
+`config.py`, `startup.py`, `setup_env.py`, `updater.py` and `watcher.py`.
+
+## Key Files
+
+- `whisperapp/` - the main application package (modules listed under Architecture).
+- `whisperapp/__main__.py` - full-app entry point (`whisperapp-app` gui-script).
+- `whisperapp/cli.py` - CLI entry point (`whisperapp` script).
+- `tests/` - the pytest suite (one `test_*.py` per module, plus `fixtures/`).
+- `pyproject.toml` / `pytest.ini` - packaging, dependencies and test configuration.
+- `COMMS.md` - cross-machine coordination file (Windows and Mac via Dropbox).
+- `mcp.json` - the app's own REST tool manifest (transport / url / tools for its API on
+  port 7861). It is NOT a Claude MCP config; do not register it as one.
+- `whisper_webui/` - a vendored git submodule (upstream Whisper-WebUI). Do not modify it.
+
+## Conventions
+
+- Coverage is the default: plain `pytest` runs everything (skips are fine, failures are
+  not). A reduced run is an explicit, logged opt-in; run and record the full suite before
+  declaring done.
+- Cross-machine work is coordinated through `COMMS.md`. Read it at the start of a session
+  that spans both machines; append status under the STATUS LOG section in the format
+  `[MACHINE -> MACHINE] date: message`.
+- Personal repo `github.com/jlldavies/whisperapp`, branch `master`; push directly when
+  asked. Never edit the `whisper_webui` submodule from this repo.
+- Keep platform-specific dependencies behind environment markers in `pyproject.toml`
+  (as with `mlx-whisper`, `truststore` and the pyobjc AVFoundation framework).
+
+## Environment
+
+- Python >= 3.10.
+- First-time Mac install:
+
+  ```zsh
+  brew install portaudio
+  /opt/homebrew/bin/python3.13 -m venv .venv
+  .venv/bin/pip install -e ".[desktop,dev]"
+  ```
+
+- Optional extras (`pip install -e ".[<extra>]"`): `desktop` (tray, mic recording),
+  `claude` / `openai` / `ai-all` (AI post-processing SDKs; Ollama needs none), `dev`
+  (pytest plus desktop), `build` (pyinstaller).
+- Platform notes:
+  - Windows: tray icon in the notification area; SSL routes through the Windows
+    certificate store (`truststore`) so corporate proxies / TLS inspectors work.
+  - macOS: icon in the menu bar; requires `rumps` (installed with pystray). Apple Silicon
+    installs `mlx-whisper` automatically for fast on-device transcription.
+  - CUDA on Windows/Linux is detected automatically and uses float16.
+- Ports: web UI on `http://127.0.0.1:7860`, REST API / health on `http://127.0.0.1:7861`.
+
+## Testing
+
+`pytest.ini` sets `asyncio_mode = auto` and, by default, deselects the `integration` and
+`browser` markers (`addopts = -m "not integration and not browser"`):
+
+- `integration` - tests that download models or need `HF_TOKEN`.
+- `browser` - Playwright tests that require the live app on ports 7860/7861.
+
+Run those explicitly when needed, for example `pytest -m browser` with the app running.
+Everything else runs on a plain `pytest tests/ -q`.
+
+## Gotchas
+
+- `mcp.json` is the app's REST tool manifest, not a Claude MCP config. Do not register it
+  in `.mcp.json` or a desktop config as-is.
+- `whisper_webui/` is a submodule; never edit files inside it from this repo.
+- The web UI and REST API bind fixed ports 7860 and 7861; free them before starting.
+- macOS tray support needs `rumps`; without the `desktop` extra the tray will not appear.
+- Some dependencies are platform-gated by markers, so a lockstep dependency list differs
+  per OS. Trust the `pyproject.toml` markers rather than pinning by hand.
 
 ## MCP servers
-No project-scoped Claude MCP servers — the machine-wide ones (`nexus-remote`, `rsvp-reader`)
-suffice. Verify with `claude mcp list` (each ✔ Connected). The app itself is driven over its
-REST API on :7861 (see `mcp.json` note above), not via a Claude MCP registration.
+
+None. This repo defines no project-scoped Claude MCP servers; the machine-wide
+`nexus-remote` and `rsvp-reader` suffice (verify with `claude mcp list`, each Connected).
+Note that `mcp.json` in this repo is the app's own REST tool manifest for its API on port
+7861, not a Claude MCP registration.
