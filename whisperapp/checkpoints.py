@@ -14,13 +14,13 @@ class CheckpointManager:
         return self.dir / f"{stage}.json"
 
     def save(self, stage: str, data: dict):
-        self._path(stage).write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        self._path(stage).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def load(self, stage: str) -> dict:
         p = self._path(stage)
         if not p.exists():
             return None
-        return json.loads(p.read_text())
+        return json.loads(p.read_text(encoding="utf-8"))
 
     def has(self, stage: str) -> bool:
         return self._path(stage).exists()

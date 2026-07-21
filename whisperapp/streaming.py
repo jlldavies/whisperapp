@@ -23,12 +23,22 @@ def _load_vad():
         with _vad_lock:
             if _vad_model is None:
                 import torch
-                model, utils = torch.hub.load(
-                    repo_or_dir="snakers4/silero-vad",
-                    model="silero_vad",
-                    force_reload=False,
-                    trust_repo=True,
-                )
+                try:
+                    model, utils = torch.hub.load(
+                        repo_or_dir="snakers4/silero-vad",
+                        model="silero_vad",
+                        force_reload=False,
+                        trust_repo=True,
+                    )
+                except (FileNotFoundError, RuntimeError) as e:
+                    # Corrupted or incomplete cache — retry with forced re-download.
+                    logger.warning("Silero VAD cache unusable (%s), forcing re-download", e)
+                    model, utils = torch.hub.load(
+                        repo_or_dir="snakers4/silero-vad",
+                        model="silero_vad",
+                        force_reload=True,
+                        trust_repo=True,
+                    )
                 _vad_model = model
     return _vad_model
 

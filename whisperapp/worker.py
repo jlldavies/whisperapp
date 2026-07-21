@@ -357,41 +357,6 @@ def _tracked_align(align_fn, segments, align_model, metadata,
     return aligned
 
 
-def _install_diarize_hook(diarize_pipeline, queue, job_id, heartbeat):
-    """Hook into pyannote's DiarizationPipeline to report progress.
-    Pyannote pipelines use a hook system — we install one that updates
-    the DB as each internal step completes."""
-    try:
-        from pyannote.audio.pipelines.utils import oracle
-        # pyannote pipelines accept a 'hook' callback in __call__
-        # The hook receives (step_name, step_artefact, file) on each step.
-        # We wrap the pipeline's __call__ to inject our hook.
-        original_call = diarize_pipeline.__class__.__call__
-
-        _steps_seen = []
-
-        def _hooked_call(self, file, **kwargs):
-            # pyannote passes hook= to internal steps
-            def progress_hook(step_name, step_artefact, file=None):
-                _steps_seen.append(step_name)
-                n = len(_steps_seen)
-                # Estimate ~4 major steps in diarization pipeline
-                frac = min(n / 4.0, 0.85)
-                overall = _stage_progress("diarizing", frac)
-                label = STAGES["diarizing"]["label"]
-                queue.update_progress(
-                    job_id, overall,
-                    f"{label} — {step_name}")
-                heartbeat._start_time = time.time()
-
-            kwargs.setdefault("hook", progress_hook)
-            return original_call(self, file, **kwargs)
-
-        import types as _types
-        diarize_pipeline.__call__ = _types.MethodType(_hooked_call, diarize_pipeline)
-    except Exception:
-        # If hook injection fails, fall back to heartbeat-only progress
-        pass
 
 
 class Worker:
@@ -542,24 +507,29 @@ class Worker:
             if self.queue.get_job(job_id)["status"] == JobStatus.CANCELLED:
                 return
 
-            # --- Stage 4: Diarization (with progress via pyannote hooks) ---
+            # --- Stage 4: Diarization ---
             if job["diarize"] and not cm.has("diarization"):
                 hb.update("diarizing")
                 diarize_model = DiarizationPipeline(
                     token=self.hf_token, device=_DIARIZE_DEVICE)
 
-                # Hook into pyannote's pipeline progress
-                _install_diarize_hook(
-                    diarize_model, self.queue, job_id, hb)
-                # Pass audio as a pre-loaded waveform dict so pyannote never
-                # needs to decode the file itself — avoids torchcodec /
-                # FFmpeg-shared-library dependency on Windows.
+                # whisperx 3.8+ accepts a progress_callback(float 0-100).
+                # Pass audio as a numpy array — DiarizationPipeline.__call__
+                # handles the waveform conversion internally.
+                _diarize_label = STAGES["diarizing"]["label"]
+                def _diarize_progress(pct: float) -> None:
+                    overall = _stage_progress("diarizing", pct / 100.0)
+                    self.queue.update_progress(
+                        job_id, overall,
+                        f"{_diarize_label} — {int(pct)}%")
+                    hb._start_time = time.time()
+
                 _audio_np = whisperx.load_audio(job["file_path"])
-                _waveform = torch.from_numpy(_audio_np).unsqueeze(0)  # (1, time)
                 diarize_segments = diarize_model(
-                    {"waveform": _waveform, "sample_rate": whisperx.audio.SAMPLE_RATE}
+                    _audio_np,
+                    progress_callback=_diarize_progress,
                 )
-                del _audio_np, _waveform
+                del _audio_np
 
                 self.queue.update_progress(
                     job_id, _stage_progress("diarizing", 0.9),

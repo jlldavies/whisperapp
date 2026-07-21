@@ -570,7 +570,11 @@ async function _drainChunkQueue(container) {
 
       const vadMeta = container.querySelector('#vad-meta');
       if (vadMeta) vadMeta.textContent = res.new_text ? 'VAD · speech ✓' : 'VAD · listening';
-    } catch { /* non-fatal */ }
+    } catch (err) {
+      const vadMeta = container.querySelector('#vad-meta');
+      if (vadMeta) vadMeta.textContent = `chunk error: ${err.detail || err.message || err}`;
+      console.error('stream/chunk error:', err);
+    }
   }
   _draining = false;
 }
