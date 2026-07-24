@@ -118,10 +118,3 @@ Everything else runs on a plain `pytest tests/ -q`.
 - macOS tray support needs `rumps`; without the `desktop` extra the tray will not appear.
 - Some dependencies are platform-gated by markers, so a lockstep dependency list differs
   per OS. Trust the `pyproject.toml` markers rather than pinning by hand.
-
-## MCP servers
-
-None. This repo defines no project-scoped Claude MCP servers; the machine-wide
-`nexus-remote` and `rsvp-reader` suffice (verify with `claude mcp list`, each Connected).
-Note that `mcp.json` in this repo is the app's own REST tool manifest for its API on port
-7861, not a Claude MCP registration.
