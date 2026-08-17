@@ -20,6 +20,7 @@ from whisperapp.sanitise import (sanitise_file_path, sanitise_output_path,
 from whisperapp.streaming import StreamingEngine
 from whisperapp.ui import list_audio_devices
 from whisperapp.config import _config_dir, Config
+from whisperapp.ai import AIProviderError
 from pathlib import Path
 
 ALLOWED_IPS = {"127.0.0.1", "::1", "testclient"}  # testclient for httpx tests
@@ -211,6 +212,15 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         from whisperapp.ai import make_provider
         cfg = Config()
         return make_provider(cfg.ai_provider, cfg.ai_api_key, cfg.ai_model, cfg.ai_base_url)
+
+    def _ai_call_failed(e: AIProviderError) -> HTTPException:
+        # 502: the provider call itself failed (auth/network/rate-limit/model
+        # error) — distinct from 503 "no provider configured" above, and from
+        # a 200 with a real (possibly empty) result. Never let this collapse
+        # into a bare 200 — an empty mapping/notes/summary on a failed call
+        # would be indistinguishable from a genuine "nothing found".
+        logger.error("AI provider call failed: %s", e)
+        return HTTPException(status_code=502, detail=f"AI provider call failed: {e}")
 
     @app.get("/health")
     async def health():
@@ -537,7 +547,13 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         result = cm.load("speaker_review")
         from whisperapp.speakers import extract_speaker_snippets
         snippets = extract_speaker_snippets(result)
-        mapping = ai.identify_speakers(snippets, context=req.context)
+        try:
+            mapping = ai.identify_speakers(snippets, context=req.context)
+        except AIProviderError as e:
+            raise _ai_call_failed(e)
+        # mapping == {} here means the AI ran and legitimately proposed no
+        # renames — a 200 with an empty mapping. A failed call never reaches
+        # this line; it raises above instead, so the two can't be confused.
         return {"mapping": mapping, "provider": ai.name}
 
     @app.post("/ai/meeting-notes")
@@ -561,7 +577,14 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
             raise HTTPException(status_code=404,
                                 detail="txt transcript not found for this job")
         transcript = txt_file.read_text(encoding="utf-8")
-        notes = ai.meeting_notes(transcript, context=req.context)
+        try:
+            notes = ai.meeting_notes(transcript, context=req.context)
+        except AIProviderError as e:
+            raise _ai_call_failed(e)
+        # A failed call raises above and is handled there. This guards the
+        # separate case: the call succeeded but the model returned nothing
+        # usable — still worth a hard error since notes are the whole point
+        # of this endpoint, but distinct (500, not 502) from a call failure.
         if not notes:
             raise HTTPException(status_code=500,
                                 detail="AI provider returned empty response")
@@ -576,7 +599,10 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         if not ai.is_available():
             raise HTTPException(status_code=503,
                                 detail="No AI provider configured.")
-        summary = ai.live_summary(req.transcript)
+        try:
+            summary = ai.live_summary(req.transcript)
+        except AIProviderError as e:
+            raise _ai_call_failed(e)
         return {"summary": summary, "provider": ai.name}
 
     # -----------------------------------------------------------------------

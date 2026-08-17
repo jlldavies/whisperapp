@@ -28,6 +28,19 @@ import logging
 
 log = logging.getLogger("whisperapp.ai")
 
+
+class AIProviderError(RuntimeError):
+    """Raised when a provider call fails (auth, network, rate-limit, model error,
+    timeout, missing SDK, etc).
+
+    This exists to keep "the AI call failed" from being silently collapsed into
+    "the AI ran and had nothing to say" — the two used to both surface as an
+    empty string, which is indistinguishable from a legitimate empty result at
+    every call site above it. Callers (see server.py) must catch this
+    separately from a genuinely empty/successful response.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Prompts
 # ---------------------------------------------------------------------------
@@ -93,7 +106,16 @@ def _format_snippet_samples(snippets: dict) -> str:
 # ---------------------------------------------------------------------------
 
 class AIProvider(ABC):
-    """Abstract AI provider. All methods return empty/passthrough on failure."""
+    """Abstract AI provider.
+
+    A configured provider that actually calls out (Claude/OpenAI/Ollama) raises
+    AIProviderError if the call itself fails — auth, network, rate limit, bad
+    model, timeout. It returns an empty/passthrough value only for a genuine
+    "ran fine, nothing to report" result (e.g. no snippets given, or the model
+    legitimately found no speakers to name). NullProvider (no AI configured) is
+    the exception: its methods always return empty, by design, since callers
+    are expected to gate on is_available() before invoking it.
+    """
 
     @property
     def name(self) -> str:
@@ -166,7 +188,8 @@ class ClaudeProvider(AIProvider):
     def _call(self, system: str, user: str) -> str:
         client = self._client()
         if not client:
-            return ""
+            raise AIProviderError(
+                "anthropic package not installed. Run: pip install anthropic")
         try:
             msg = client.messages.create(
                 model=self._model,
@@ -177,7 +200,7 @@ class ClaudeProvider(AIProvider):
             return msg.content[0].text
         except Exception as e:
             log.error("Claude API error: %s", e)
-            return ""
+            raise AIProviderError(f"Claude API error: {e}") from e
 
     def identify_speakers(self, snippets, context=""):
         if not snippets:
@@ -230,7 +253,8 @@ class OpenAIProvider(AIProvider):
     def _call(self, system: str, user: str) -> str:
         client = self._client()
         if not client:
-            return ""
+            raise AIProviderError(
+                "openai package not installed. Run: pip install openai")
         try:
             resp = client.chat.completions.create(
                 model=self._model,
@@ -243,7 +267,7 @@ class OpenAIProvider(AIProvider):
             return resp.choices[0].message.content or ""
         except Exception as e:
             log.error("OpenAI API error: %s", e)
-            return ""
+            raise AIProviderError(f"OpenAI API error: {e}") from e
 
     def identify_speakers(self, snippets, context=""):
         if not snippets:
@@ -307,7 +331,7 @@ class OllamaProvider(AIProvider):
             return r.json()["message"]["content"]
         except Exception as e:
             log.error("Ollama error: %s", e)
-            return ""
+            raise AIProviderError(f"Ollama error: {e}") from e
 
     def identify_speakers(self, snippets, context=""):
         if not snippets:

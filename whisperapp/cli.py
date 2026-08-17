@@ -8,6 +8,17 @@ API_BASE = "http://127.0.0.1:7861"
 def get_queue():
     return JobQueue()
 
+def _error_detail(r):
+    """Best-effort extraction of the server's error detail, for reporting
+    a failed AI call without throwing a second error while doing it."""
+    try:
+        detail = r.json().get("detail")
+        if detail:
+            return detail
+    except (ValueError, AttributeError):
+        pass
+    return r.text or f"HTTP {r.status_code}"
+
 @click.group()
 def cli():
     """WhisperApp - local transcription with speaker diarization."""
@@ -343,6 +354,9 @@ def identify_speakers(job_id, context, full_transcript, with_snippets, max_chars
     if r.status_code == 503:
         click.echo("No AI provider configured. Set ai_provider in Settings.", err=True)
         raise SystemExit(1)
+    if r.status_code == 502:
+        click.echo(f"AI provider call failed: {_error_detail(r)}", err=True)
+        raise SystemExit(1)
     r.raise_for_status()
     d = r.json()
     if not d["mapping"]:
@@ -366,6 +380,9 @@ def meeting_notes(job_id, context):
         raise SystemExit(1)
     if r.status_code == 503:
         click.echo("No AI provider configured. Set ai_provider in Settings.", err=True)
+        raise SystemExit(1)
+    if r.status_code == 502:
+        click.echo(f"AI provider call failed: {_error_detail(r)}", err=True)
         raise SystemExit(1)
     r.raise_for_status()
     d = r.json()
