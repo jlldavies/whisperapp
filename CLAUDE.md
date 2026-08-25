@@ -53,15 +53,8 @@ post-processing), `model_registry.py` and `checkpoints.py` (model selection and 
 
 ## Key Files
 
-- `whisperapp/` - the main application package (modules listed under Architecture).
-- `whisperapp/__main__.py` - full-app entry point (`whisperapp-app` gui-script).
-- `whisperapp/cli.py` - CLI entry point (`whisperapp` script).
-- `tests/` - the pytest suite (one `test_*.py` per module, plus `fixtures/`).
-- `pyproject.toml` / `pytest.ini` - packaging, dependencies and test configuration.
-- `COMMS.md` - cross-machine coordination file (Windows and Mac via Dropbox).
-- `mcp.json` - the app's own REST tool manifest (transport / url / tools for its API on
-  port 7861). It is NOT a Claude MCP config; do not register it as one.
-- `whisper_webui/` - a vendored git submodule (upstream Whisper-WebUI). Do not modify it.
+Per-file map (incl. `COMMS.md`, `mcp.json` is NOT a Claude MCP config, `whisper_webui/` submodule):
+`docs/CLAUDE-REFERENCE.md` §Key Files.
 
 ## Conventions
 
@@ -90,12 +83,7 @@ post-processing), `model_registry.py` and `checkpoints.py` (model selection and 
 - Optional extras (`pip install -e ".[<extra>]"`): `desktop` (tray, mic recording),
   `claude` / `openai` / `ai-all` (AI post-processing SDKs; Ollama needs none), `dev`
   (pytest plus desktop), `build` (pyinstaller).
-- Platform notes:
-  - Windows: tray icon in the notification area; SSL routes through the Windows
-    certificate store (`truststore`) so corporate proxies / TLS inspectors work.
-  - macOS: icon in the menu bar; requires `rumps` (installed with pystray). Apple Silicon
-    installs `mlx-whisper` automatically for fast on-device transcription.
-  - CUDA on Windows/Linux is detected automatically and uses float16.
+- Platform notes (Windows truststore, macOS rumps + mlx-whisper, CUDA float16): `docs/CLAUDE-REFERENCE.md` §Environment.
 - Ports: web UI on `http://127.0.0.1:7860`, REST API / health on `http://127.0.0.1:7861`.
 
 ## Testing
