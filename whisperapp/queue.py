@@ -95,8 +95,11 @@ class JobQueue:
     def update_progress(self, job_id, progress, stage):
         with self._conn() as conn:
             conn.execute(
-                "UPDATE jobs SET progress=?, stage=?, status=? WHERE id=?",
-                (progress, stage, JobStatus.RUNNING, job_id)
+                # Never resurrect a cancelled job: the worker only checks for
+                # cancellation between stages, so a progress tick in between
+                # must not overwrite it back to running.
+                "UPDATE jobs SET progress=?, stage=?, status=? WHERE id=? AND status!=?",
+                (progress, stage, JobStatus.RUNNING, job_id, JobStatus.CANCELLED)
             )
 
     def set_status(self, job_id, status, error=None):

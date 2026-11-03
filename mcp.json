@@ -35,7 +35,7 @@
           },
           "formats": {
             "type": "array",
-            "items": { "type": "string", "enum": ["txt", "srt", "vtt", "json", "tsv"] },
+            "items": { "type": "string", "enum": ["txt", "md", "srt", "vtt", "json", "tsv"] },
             "default": ["txt", "srt", "vtt", "json"],
             "description": "Output formats to generate."
           }
@@ -84,7 +84,7 @@
           "job_id": { "type": "string" },
           "format": {
             "type": "string",
-            "enum": ["txt", "srt", "vtt", "json", "tsv"],
+            "enum": ["txt", "md", "srt", "vtt", "json", "tsv"],
             "default": "txt"
           }
         },

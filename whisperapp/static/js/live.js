@@ -15,6 +15,7 @@ let _pcmQueue = [];
 let _draining = false;
 let _segIdCounter = 0;
 let _speakerNames = new Map(); // SPEAKER_00 → user-friendly name
+const _liveFmts = new Set(['txt', 'md']); // written on stop, and again after polish
 
 // ── Always-on device meter ───────────────────────────────────────────────────
 let _meterStream = null;
@@ -102,13 +103,14 @@ export function initLive(container) {
               <div><div class="wa-label">Words</div><div class="mono" style="font-size:13px" id="stat-words">0</div></div>
               <div><div class="wa-label">Segments</div><div class="mono" style="font-size:13px" id="stat-segs">0</div></div>
               <div><div class="wa-label">Audio</div><div class="mono" style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="stat-output">—</div></div>
+              <div style="grid-column:1/-1"><div class="wa-label">Saved transcript</div><div class="mono" style="font-size:11px;overflow-wrap:anywhere" id="stat-saved">—</div></div>
             </div>
           </div>
 
           <div class="wa-card">
             <div class="wa-card-head"><div class="wa-card-title">Save formats</div></div>
             <div style="display:flex;gap:6px;flex-wrap:wrap" id="live-formats">
-              ${['txt','srt','vtt','json','tsv','docx','pdf'].map((f,i)=>`<span class="wa-chip${i===0?' on':''}" data-fmt="${f}">${f}</span>`).join('')}
+              ${['txt','md','srt','vtt','json','tsv','docx','pdf'].map(f=>`<span class="wa-chip${_liveFmts.has(f)?' on':''}" data-fmt="${f}">${f}</span>`).join('')}
             </div>
           </div>
 
@@ -136,13 +138,12 @@ export function initLive(container) {
 
   _initDevices(container);
 
-  const liveFmts = new Set(['txt']);
   container.querySelector('#live-formats').addEventListener('click', e => {
     const chip = e.target.closest('[data-fmt]');
     if (!chip) return;
     const f = chip.dataset.fmt;
-    if (liveFmts.has(f)) liveFmts.delete(f); else liveFmts.add(f);
-    chip.classList.toggle('on', liveFmts.has(f));
+    if (_liveFmts.has(f)) _liveFmts.delete(f); else _liveFmts.add(f);
+    chip.classList.toggle('on', _liveFmts.has(f));
   });
 
   container.querySelector('#check-levels-btn').addEventListener('click', () => {
@@ -153,7 +154,7 @@ export function initLive(container) {
 
   container.querySelector('#record-btn').addEventListener('click', () => {
     if (_session) stopRecording(container);
-    else startRecording(container, liveFmts);
+    else startRecording(container);
   });
 
   container.querySelector('#clear-btn').addEventListener('click', () => {
@@ -392,7 +393,7 @@ function closeCheckLevelsPanel(container) {
 
 // ── Recording ────────────────────────────────────────────────────────────────
 
-async function startRecording(container, formats) {
+async function startRecording(container) {
   const deviceId = container.querySelector('#device-select').value;
 
   // Close check levels panel and stop always-on meter
@@ -505,7 +506,7 @@ async function stopRecording(container) {
 
   if (sid) {
     try {
-      const result = await api.streamStop({ session_id: sid });
+      const result = await api.streamStop({ session_id: sid, formats: [..._liveFmts] });
       if (result && result.text && result.text.trim()) {
         _transcript.push({ id: _segIdCounter++, t: formatTime(_elapsed), txt: result.text.trim(), speaker: null, review: false });
         updateTranscriptUI(container);
@@ -515,6 +516,7 @@ async function stopRecording(container) {
         const el = document.getElementById('stat-output');
         if (el) el.textContent = name;
       }
+      _showSavedPaths(result && result.transcript_paths);
     } catch { /* best effort */ }
   }
 
@@ -595,6 +597,7 @@ async function runPolish(container, sessionId) {
       _applyPolishResult(result, container);
       if (vadMeta) vadMeta.textContent = 'Polish · done';
     }
+    _showSavedPaths(result && result.transcript_paths);
   } catch {
     if (vadMeta) vadMeta.textContent = 'Polish · failed';
   } finally {
@@ -602,6 +605,15 @@ async function runPolish(container, sessionId) {
     polishBtn.disabled = false;
     _lastSessionId = null;
   }
+}
+
+function _showSavedPaths(paths) {
+  const el = document.getElementById('stat-saved');
+  if (!el || !paths || !paths.length) return;
+  const dir = paths[0].replace(/[/\\][^/\\]*$/, '');
+  const names = paths.map(p => p.replace(/.*[/\\]/, ''));
+  el.textContent = `${names.join(', ')} → ${dir}`;
+  el.title = paths.join('\n');
 }
 
 function _applyPolishResult(result, container) {

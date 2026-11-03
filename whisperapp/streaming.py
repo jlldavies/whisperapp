@@ -264,14 +264,21 @@ class StreamingEngine:
         if not self._running:
             self.start()
 
-        self._buffer.add_chunk(sr, audio)
-
-        # Store raw audio for optional Polish step
         if audio.ndim > 1:
-            audio_mono = audio[:, 0] if audio.shape[1] > 1 else audio.ravel()
-        else:
-            audio_mono = audio
-        self._all_audio.append(audio_mono.astype(np.float32))
+            audio = audio[:, 0] if audio.shape[1] > 1 else audio.ravel()
+        audio = audio.astype(np.float32)
+
+        # Resample once here so the saved audio matches the 16 kHz that
+        # stop()/polish() assume. Storing the browser's native rate (usually
+        # 48 kHz) labelled as 16 kHz produced a WAV at one-third speed.
+        if sr != self._buffer.target_sr:
+            import soxr
+            audio = soxr.resample(audio, sr, self._buffer.target_sr).astype(np.float32)
+
+        self._buffer.add_chunk(self._buffer.target_sr, audio)
+
+        # Store audio for the optional Polish step and the saved WAV
+        self._all_audio.append(audio)
 
         utterance = self._buffer.get_utterance()
         if utterance is None:
@@ -346,13 +353,16 @@ class StreamingEngine:
         self._all_audio.clear()
         self._running = False
 
-    def polish(self, hf_token: str, on_progress=None) -> dict:
+    def polish(self, hf_token: str, on_progress=None,
+               model_size: Optional[str] = None) -> dict:
         """Run WhisperX alignment + diarization on accumulated audio.
 
         This is a post-hoc step that produces word-level timestamps and
         speaker labels — not possible in real-time.
 
         on_progress(stage, detail) is called at each stage if provided.
+        model_size overrides the (small, real-time) streaming model so the
+        polish pass can use the full-quality model.
         """
         def _progress(stage, detail=""):
             if on_progress:
@@ -372,7 +382,8 @@ class StreamingEngine:
         # Stage 1: Transcribe
         _progress("transcribing", "loading WhisperX model...")
         model = whisperx.load_model(
-            self.model_size, device=_WHISPER_DEVICE, compute_type=_COMPUTE_TYPE
+            model_size or self.model_size,
+            device=_WHISPER_DEVICE, compute_type=_COMPUTE_TYPE
         )
         _progress("transcribing", "running transcription...")
         result = model.transcribe(raw_audio, batch_size=8, language="en")

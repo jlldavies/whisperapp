@@ -80,18 +80,81 @@ def result_to_tsv(result: dict) -> str:
                     f"{seg.get('speaker','')}\t{seg.get('text','').strip()}")
     return "\n".join(rows)
 
+def _format_time_md(seconds: float) -> str:
+    return _format_time_srt(seconds).split(",")[0]
+
+def _is_marker(seg: dict) -> bool:
+    return bool(seg.get("is_acoustic_marker") or seg.get("is_pause_marker")
+                or seg.get("is_emotion_marker"))
+
+def result_to_md(result: dict) -> str:
+    """Readable Markdown: consecutive segments from one speaker become a
+    single paragraph under a bold speaker + timestamp line. Without speaker
+    labels (e.g. a live transcript) each segment is its own timestamped line.
+    Acoustic / emotion / pause markers are speaker-less pseudo-segments that
+    follow the line they describe, so they go inline in italics rather than
+    breaking the paragraph."""
+    meta = result.get("source_metadata") or {}
+    title = meta.get("source_file", "")
+    lines = [f"# Transcript{' — ' + title if title else ''}", ""]
+    if meta:
+        from whisperapp.metadata import render_text_block
+        lines.append(render_text_block(meta, comment_prefix="- "))
+        lines.append("")
+
+    current_speaker = None
+    paragraph: list[str] = []
+
+    def _flush():
+        if paragraph:
+            lines.append(" ".join(paragraph))
+            lines.append("")
+            paragraph.clear()
+
+    for seg in result.get("segments", []):
+        text = seg.get("text", "").strip()
+        if not text:
+            continue
+        if _is_marker(seg):
+            marker = f"_{text}_"
+            if not paragraph or paragraph[-1] != marker:
+                paragraph.append(marker)
+            continue
+        stamp = _format_time_md(seg.get("start", 0.0))
+        speaker = seg.get("speaker", "")
+        if not speaker:
+            _flush()
+            current_speaker = None
+            lines.append(f"**[{stamp}]** {text}")
+            lines.append("")
+            continue
+        if speaker != current_speaker:
+            _flush()
+            current_speaker = speaker
+            lines.append(f"**{speaker}** [{stamp}]")
+            lines.append("")
+        paragraph.append(text)
+    _flush()
+    return "\n".join(lines).rstrip() + "\n"
+
 FORMATTERS = {
     "txt": result_to_txt,
     "srt": result_to_srt,
     "vtt": result_to_vtt,
     "json": lambda r: json.dumps(r, ensure_ascii=False, indent=2),
     "tsv": result_to_tsv,
+    "md": result_to_md,
 }
 
 def write_formats(result: dict, source_file: str,
                   output_path: str, formats: list,
-                  config: Optional[object] = None):
-    stem = Path(source_file).stem
+                  config: Optional[object] = None,
+                  stem: Optional[str] = None) -> list:
+    """Write *result* in each of *formats*; return the paths written.
+
+    Files are named after *source_file* unless *stem* is given."""
+    stem = stem or Path(source_file).stem
+    written = []
     out_dir = Path(output_path)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -105,7 +168,7 @@ def write_formats(result: dict, source_file: str,
             pass
 
     # Formats that show human-readable text — pause markers are inserted here
-    HUMAN_FORMATS = {"txt", "srt", "vtt", "docx", "pdf"}
+    HUMAN_FORMATS = {"txt", "srt", "vtt", "md", "docx", "pdf"}
 
     marked_result = None  # lazily computed
 
@@ -125,6 +188,7 @@ def write_formats(result: dict, source_file: str,
                 write_docx(rich, source_file, out_file, config)
             else:
                 write_pdf(rich, source_file, out_file, config)
+            written.append(str(out_file))
             continue
 
         if fmt not in FORMATTERS:
@@ -139,3 +203,5 @@ def write_formats(result: dict, source_file: str,
         else:
             content = FORMATTERS[fmt](result)
         out_file.write_text(content, encoding="utf-8")
+        written.append(str(out_file))
+    return written

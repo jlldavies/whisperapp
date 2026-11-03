@@ -68,6 +68,9 @@ class StreamChunkRequest(BaseModel):
 
 class StreamStopRequest(BaseModel):
     session_id: str
+    # Formats for the live transcript, written to disk as soon as the session
+    # stops; polish later writes the same formats with a `_polished` suffix.
+    formats: List[str] = ["txt", "md"]
 
 
 class StreamPolishRequest(BaseModel):
@@ -88,6 +91,35 @@ class AIMeetingNotesRequest(BaseModel):
 class AILiveSummaryRequest(BaseModel):
     transcript: str
     context: str = ""
+
+
+def _save_live_outputs(session_id, result, wav_path, out_dir, formats, cfg):
+    """Write a stopped live session to disk: transcript first (so the text is
+    available even if the audio write fails), then the WAV. Each step logs and
+    swallows its own failure. Returns (audio_path, transcript_paths)."""
+    transcript_paths = []
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        if result["segments"]:
+            from whisperapp.formatters import write_formats
+            transcript_paths = write_formats(
+                {"segments": result["segments"]}, str(wav_path),
+                str(out_dir), formats, cfg)
+    except Exception as exc:
+        logger.warning("stream/stop session=%s transcript save failed: %s", session_id, exc)
+
+    audio_path = None
+    try:
+        import soundfile as sf
+        sf.write(str(wav_path), result["raw_audio"], result["sample_rate"])
+        audio_path = str(wav_path)
+        logger.info("stream/stop session=%s wav=%s words=%d transcripts=%s",
+                    session_id, wav_path.name,
+                    len(result["text"].split()) if result["text"] else 0,
+                    [Path(p).name for p in transcript_paths])
+    except Exception as exc:
+        logger.warning("stream/stop session=%s wav save failed: %s", session_id, exc)
+    return audio_path, transcript_paths
 
 
 def create_setup_app(on_restart=None) -> FastAPI:
@@ -677,27 +709,21 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         # Keep session alive so /stream/polish can still access the raw audio.
         # Cleaned up by stream_polish or left to GC on server restart.
 
-        # Save raw audio as WAV alongside transcripts
-        audio_path = None
-        try:
-            import soundfile as sf
-            _cfg = Config()
-            out_dir = Path(_cfg.default_output_path)
-            out_dir.mkdir(parents=True, exist_ok=True)
-            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            wav_path = out_dir / f"live_{ts}.wav"
-            sf.write(str(wav_path), result["raw_audio"], result["sample_rate"])
-            audio_path = str(wav_path)
-            logger.info("stream/stop session=%s wav=%s words=%d",
-                        req.session_id, wav_path.name,
-                        len(result["text"].split()) if result["text"] else 0)
-        except Exception as exc:
-            logger.warning("stream/stop session=%s wav save failed: %s", req.session_id, exc)
+        _cfg = Config()
+        out_dir = Path(_cfg.default_output_path)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        wav_path = out_dir / f"live_{ts}.wav"
+        session.update(wav_path=wav_path, output_dir=out_dir,
+                       formats=list(req.formats))
+        audio_path, transcript_paths = await loop.run_in_executor(
+            None, _save_live_outputs, req.session_id, result, wav_path,
+            out_dir, req.formats, _cfg)
 
         return {
             "text": result["text"],
             "segments": result["segments"],
             "audio_path": audio_path,
+            "transcript_paths": transcript_paths,
         }
 
     @app.post("/stream/polish")
@@ -711,9 +737,11 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         logger.info("stream/polish session=%s hf_token=%s",
                     req.session_id, "set" if req.hf_token else "not set")
         # polish() runs WhisperX + pyannote — very slow, must not block event loop
+        _cfg = Config()
         loop = asyncio.get_running_loop()
         polished = await loop.run_in_executor(
-            None, lambda: session["engine"].polish(req.hf_token or "")
+            None, lambda: session["engine"].polish(
+                req.hf_token or "", model_size=_cfg.default_model)
         )
 
         # Clean up session after polish
@@ -721,8 +749,24 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         logger.info("stream/polish session=%s complete segments=%d",
                     req.session_id, len(polished.get("segments", [])))
 
+        transcript_paths = []
+        if session.get("wav_path") is not None:
+            wav_path = session["wav_path"]
+            try:
+                from whisperapp.formatters import write_formats
+                transcript_paths = await loop.run_in_executor(
+                    None, lambda: write_formats(
+                        {"segments": polished.get("segments", [])},
+                        str(wav_path), str(session["output_dir"]),
+                        session["formats"], _cfg,
+                        stem=f"{wav_path.stem}_polished"))
+            except Exception as exc:
+                logger.warning("stream/polish session=%s transcript save failed: %s",
+                               req.session_id, exc)
+
         return {
             "segments": polished.get("segments", []),
+            "transcript_paths": transcript_paths,
         }
 
     # -----------------------------------------------------------------------

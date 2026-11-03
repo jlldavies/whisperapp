@@ -42,6 +42,13 @@ def test_cancel_job(q):
     job = q.get_job(job_id)
     assert job["status"] == JobStatus.CANCELLED
 
+def test_progress_tick_does_not_undo_cancel_of_running_job(q):
+    job_id = q.create_job("/tmp/a.mp3", "/tmp/out", "large-v2", True, ["txt"])
+    q.update_progress(job_id, 10, "2/5 Transcribing")
+    q.cancel_job(job_id)
+    q.update_progress(job_id, 20, "2/5 Transcribing")
+    assert q.get_job(job_id)["status"] == JobStatus.CANCELLED
+
 def test_list_jobs(q):
     q.create_job("/tmp/a.mp3", "/tmp/out", "large-v2", True, ["txt"])
     q.create_job("/tmp/b.mp3", "/tmp/out", "large-v2", True, ["txt"])

@@ -56,7 +56,7 @@ Most Whisper tools give you text. WhisperApp gives you **analysis-ready transcri
 - **10+ Whisper model sizes** — `tiny` through `large-v3` and `turbo`; Apple Silicon auto-uses MLX for fast on-device inference
 - **Queue with priority control** — reorder jobs, delete items, pause and resume the worker to reclaim CPU
 - **Checkpoint recovery** — each job saves progress through stages; a crash picks back up where it left off
-- **Output formats** — TXT, SRT, VTT, JSON, TSV, DOCX, PDF — all generated simultaneously from the same aligned data
+- **Output formats** — TXT, Markdown, SRT, VTT, JSON, TSV, DOCX, PDF — all generated simultaneously from the same aligned data
 
 ### Speaker diarization
 - **pyannote.audio** — identifies each speaker's turns throughout the recording
@@ -67,7 +67,8 @@ Most Whisper tools give you text. WhisperApp gives you **analysis-ready transcri
 - **Real-time streaming** with sub-second latency (faster-whisper + Silero VAD)
 - **Any microphone** — pick from detected devices, check input levels before you start
 - **Auto-pauses batch queue** when recording starts, resumes it when you stop — no CPU contention
-- **Polish** — after stopping, run full WhisperX alignment + diarization on the recorded session
+- **Saved on stop** — the live transcript is written in your chosen formats (TXT + Markdown by default) next to the session WAV the moment you stop
+- **Polish** — after stopping, run full WhisperX alignment + diarization on the recorded session; the result is saved alongside as `live_<time>_polished.*`, leaving the live transcript in place
 
 ### Transcript annotations
 Injected inline so every output format gets the same enriched content:
@@ -289,7 +290,7 @@ DELETE /jobs/{id}                 Delete permanently
 POST   /jobs/{id}/cancel          Cancel
 POST   /jobs/{id}/move-up         Reorder in queue
 POST   /jobs/{id}/move-down       Reorder in queue
-GET    /jobs/{id}/transcript      Get transcript (?format=txt|srt|vtt)
+GET    /jobs/{id}/transcript      Get transcript (?format=txt|md|srt|vtt)
 GET    /jobs/{id}/segments        Paged segments with source_metadata + SHA-256 (?offset&limit&include_words)
 
 GET    /worker/status             Running or paused
@@ -298,8 +299,8 @@ POST   /worker/resume             Resume batch processing
 
 POST   /stream/start              Start live session → {session_id}
 POST   /stream/chunk              Send audio chunk (base64 PCM float32)
-POST   /stream/stop               Stop + save → {text, segments}
-POST   /stream/polish             Full alignment + diarize on session audio
+POST   /stream/stop               Stop + save WAV and transcript (?formats) → {text, segments, audio_path, transcript_paths}
+POST   /stream/polish             Full alignment + diarize on session audio → {segments, transcript_paths}
 
 GET    /speakers/{id}             Speaker snippets for review
 POST   /speakers/{id}/label       Save name mappings → triggers output write

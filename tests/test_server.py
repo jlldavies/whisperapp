@@ -256,6 +256,77 @@ async def test_stream_stop_response_includes_audio_path(app_and_queue, tmp_path,
                 assert body["audio_path"].endswith(".wav")
 
 
+def _live_cfg(tmp_path):
+    cfg = MagicMock()
+    cfg.default_output_path = str(tmp_path)
+    cfg.default_model = "large-v2"
+    cfg.pause_detection = False
+    cfg.streaming_max_chunk_sec = 5.0
+    cfg.streaming_min_chunk_sec = 0.3
+    cfg.vad_silence_threshold = 0.4
+    return cfg
+
+
+@pytest.mark.asyncio
+async def test_stream_stop_saves_live_transcript_then_polish_saves_polished(app_and_queue, tmp_path):
+    """The live text is on disk as soon as stop returns; polish writes a
+    `_polished` copy in the same formats using the full-quality model."""
+    from pathlib import Path
+    app, q = app_and_queue
+
+    mock_engine = MagicMock()
+    mock_engine.stop.return_value = {
+        "text": "Hello there",
+        "segments": [{"start": 0.0, "end": 1.0, "text": "Hello there"}],
+        "raw_audio": np.zeros(16000, dtype=np.float32),
+        "sample_rate": 16000,
+    }
+    mock_engine.polish.return_value = {
+        "segments": [{"start": 0.0, "end": 1.0, "text": "Hello there.", "speaker": "SPEAKER_00"}],
+    }
+
+    with patch("whisperapp.server.StreamingEngine", return_value=mock_engine), \
+         patch("whisperapp.server.Config", return_value=_live_cfg(tmp_path)):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            resp = await client.post("/stream/start", json={"model": "base"})
+            session_id = resp.json()["session_id"]
+
+            resp = await client.post("/stream/stop", json={
+                "session_id": session_id, "formats": ["txt", "md"]})
+            assert resp.status_code == 200
+            live_paths = [Path(p) for p in resp.json()["transcript_paths"]]
+            assert [p.suffix for p in live_paths] == [".txt", ".md"]
+            stem = Path(resp.json()["audio_path"]).stem
+            assert all(p.stem == stem and p.parent == tmp_path for p in live_paths)
+            assert "Hello there" in live_paths[1].read_text(encoding="utf-8")
+
+            resp = await client.post("/stream/polish", json={
+                "session_id": session_id, "hf_token": "hf_test"})
+            assert resp.status_code == 200
+            polished = [Path(p) for p in resp.json()["transcript_paths"]]
+            assert [p.name for p in polished] == [f"{stem}_polished.txt", f"{stem}_polished.md"]
+            assert "**SPEAKER_00**" in polished[1].read_text(encoding="utf-8")
+            assert mock_engine.polish.call_args.kwargs["model_size"] == "large-v2"
+
+
+@pytest.mark.asyncio
+async def test_stream_stop_with_no_speech_writes_no_transcript(app_and_queue, tmp_path):
+    app, q = app_and_queue
+    mock_engine = MagicMock()
+    mock_engine.stop.return_value = {
+        "text": "", "segments": [],
+        "raw_audio": np.zeros(8000, dtype=np.float32), "sample_rate": 16000,
+    }
+    with patch("whisperapp.server.StreamingEngine", return_value=mock_engine), \
+         patch("whisperapp.server.Config", return_value=_live_cfg(tmp_path)):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            resp = await client.post("/stream/start", json={"model": "base"})
+            resp = await client.post("/stream/stop", json={"session_id": resp.json()["session_id"]})
+            assert resp.status_code == 200
+            assert resp.json()["transcript_paths"] == []
+            assert resp.json()["audio_path"] is not None
+
+
 @pytest.mark.asyncio
 async def test_stream_stop_session_persists_for_polish(app_and_queue):
     """Session is NOT removed from _sessions after stop — polish can still run."""

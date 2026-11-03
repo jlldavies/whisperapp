@@ -151,6 +151,41 @@ class TestStreamingEngine:
         assert result == "Hello"
 
     @patch("whisperapp.streaming._speech_prob", return_value=0.1)
+    @patch("whisperapp.streaming.StreamingEngine._transcribe_utterance", return_value=None)
+    def test_process_chunk_stores_16k_audio_for_48k_input(self, mock_transcribe, mock_vad):
+        """Regression: 48 kHz browser audio was stored unresampled while
+        stop() labelled it 16 kHz, so the saved WAV ran at one-third speed."""
+        from whisperapp.streaming import StreamingEngine
+        engine = StreamingEngine()
+        engine._model = MagicMock()
+        engine._running = True
+
+        engine.process_chunk(48000, np.zeros(48000, dtype=np.float32))  # 1.0s
+        result = engine.stop()
+
+        assert result["sample_rate"] == 16000
+        assert len(result["raw_audio"]) / result["sample_rate"] == pytest.approx(1.0, abs=0.01)
+
+    @patch("whisperx.assign_word_speakers")
+    @patch("whisperx.align")
+    @patch("whisperx.load_align_model")
+    @patch("whisperx.load_model")
+    def test_polish_uses_model_size_override(self, mock_load, mock_align_load,
+                                             mock_align, mock_assign):
+        from whisperapp.streaming import StreamingEngine
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = {"segments": [], "language": "en"}
+        mock_load.return_value = mock_model
+        mock_align_load.return_value = (MagicMock(), {})
+        mock_align.return_value = {"segments": []}
+
+        engine = StreamingEngine(model_size="base", device="cpu", compute_type="float32")
+        engine._all_audio = [np.zeros(16000, dtype=np.float32)]
+        engine.polish(hf_token="", model_size="large-v2")
+
+        assert mock_load.call_args.args[0] == "large-v2"
+
+    @patch("whisperapp.streaming._speech_prob", return_value=0.1)
     def test_process_chunk_returns_none_on_silence(self, mock_vad):
         from whisperapp.streaming import StreamingEngine
         engine = StreamingEngine()
