@@ -1,15 +1,16 @@
-from fastapi import FastAPI, HTTPException, Request, Response, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from typing import Optional, List
 import asyncio
 import base64
 import datetime
+import hashlib
 import json
 import logging
+import re
 import sys
 import uuid
-import shutil
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ from whisperapp.sanitise import (sanitise_file_path, sanitise_output_path,
                                    sanitise_model, sanitise_job_id)
 from whisperapp.streaming import StreamingEngine
 from whisperapp.ui import list_audio_devices
-from whisperapp.config import _config_dir, Config
+from whisperapp.config import Config
 from whisperapp.ai import AIProviderError
 from pathlib import Path
 
@@ -91,6 +92,57 @@ class AIMeetingNotesRequest(BaseModel):
 class AILiveSummaryRequest(BaseModel):
     transcript: str
     context: str = ""
+
+
+_UPLOAD_SUFFIXES = {
+    '.mp3', '.wav', '.m4a', '.mp4', '.mov', '.flac', '.ogg', '.webm', '.mkv'
+}
+_UNSAFE_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _upload_name(filename: Optional[str]) -> str:
+    """The uploaded file's own name, made safe to write on any OS. Disallowed
+    extensions become `.audio`, which /transcribe rejects, as before."""
+    raw = Path((filename or "").replace("\\", "/")).name
+    stem = _UNSAFE_NAME_CHARS.sub("_", Path(raw).stem).strip(" .")[:150] or "upload"
+    suffix = Path(raw).suffix.lower()
+    if suffix not in _UPLOAD_SUFFIXES:
+        suffix = ".audio"
+    return stem + suffix
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _store_upload(src, dest_dir: Path, name: str) -> Path:
+    """Copy an upload into *dest_dir* as *name*. If a file of that name with
+    the same content is already there (the user picked it from that folder),
+    reuse it; a different file of that name is never overwritten: the copy
+    becomes `name (1).ext`, `name (2).ext`, ..."""
+    part = dest_dir / f".{uuid.uuid4().hex}.part"
+    h = hashlib.sha256()
+    try:
+        with open(part, "wb") as f:
+            for block in iter(lambda: src.read(1 << 20), b""):
+                h.update(block)
+                f.write(block)
+        digest, size = h.hexdigest(), part.stat().st_size
+        stem, suffix = Path(name).stem, Path(name).suffix
+        for n in range(1000):
+            candidate = dest_dir / (name if n == 0 else f"{stem} ({n}){suffix}")
+            if not candidate.exists():
+                part.replace(candidate)
+                return candidate
+            if candidate.stat().st_size == size and _sha256(candidate) == digest:
+                return candidate
+        raise HTTPException(status_code=409, detail=f"Too many files named {name}")
+    finally:
+        part.unlink(missing_ok=True)
 
 
 def _save_live_outputs(session_id, result, wav_path, out_dir, formats, cfg):
@@ -720,7 +772,8 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
             out_dir, req.formats, _cfg)
 
         return {
-            "text": result["text"],
+            "text": result["text"],                     # whole transcript
+            "final_text": result.get("final_text", ""),  # only the stop-flush tail
             "segments": result["segments"],
             "audio_path": audio_path,
             "transcript_paths": transcript_paths,
@@ -1050,22 +1103,21 @@ def create_app(queue: JobQueue, worker) -> FastAPI:
         return list_audio_devices()
 
     # -----------------------------------------------------------------------
-    # File upload — saves to temp dir, returns path for /transcribe
+    # File upload — keeps the media next to its transcripts, under its own
+    # name, and returns that path for /transcribe
     # -----------------------------------------------------------------------
 
     @app.post("/upload")
-    async def upload_file(file: UploadFile):
-        uploads_dir = _config_dir() / "uploads"
-        uploads_dir.mkdir(parents=True, exist_ok=True)
-        ALLOWED_UPLOAD_SUFFIXES = {
-            '.mp3', '.wav', '.m4a', '.mp4', '.mov', '.flac', '.ogg', '.webm', '.mkv'
-        }
-        suffix = Path(file.filename).suffix.lower() if file.filename else '.audio'
-        if suffix not in ALLOWED_UPLOAD_SUFFIXES:
-            suffix = '.audio'
-        tmp_path = uploads_dir / (uuid.uuid4().hex + suffix)
-        with open(tmp_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-        return {"path": str(tmp_path)}
+    async def upload_file(file: UploadFile, output_path: Optional[str] = Form(None)):
+        try:
+            dest_dir = sanitise_output_path(
+                output_path or str(Path.home() / "Downloads"))
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        name = _upload_name(file.filename)
+        loop = asyncio.get_running_loop()
+        saved = await loop.run_in_executor(
+            None, _store_upload, file.file, dest_dir, name)
+        return {"path": str(saved)}
 
     return app

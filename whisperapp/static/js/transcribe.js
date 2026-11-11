@@ -209,17 +209,18 @@ export function initTranscribe(container) {
     btn.disabled = true;
     btn.textContent = 'Adding…';
     try {
+      const outputPath = container.querySelector('#output-path').value || null;
       let filePath;
       if (selectedFile.type === 'path') {
         filePath = selectedFile.value;
       } else {
-        const up = await api.upload(selectedFile.value);
+        const up = await api.upload(selectedFile.value, outputPath);
         filePath = up.path;
       }
       const diarize = container.querySelector('[data-stage="diarize"]').classList.contains('on');
       await api.transcribe({
         file_path: filePath,
-        output_path: container.querySelector('#output-path').value || null,
+        output_path: outputPath,
         model: container.querySelector('#model-select').value,
         diarize,
         formats: [...selectedFormats],

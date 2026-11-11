@@ -241,6 +241,20 @@ class TestStreamingEngine:
 
         result = engine.stop()
         mock_transcribe.assert_called_once()
+        assert result["final_text"] == "leftover"
+
+    def test_stop_final_text_is_only_the_flushed_tail(self):
+        """Regression (live call 2026-11-11): the UI appended stop()'s "text",
+        which is the whole call, as one last line. final_text carries only what
+        the stop flush produced; with nothing buffered it is empty."""
+        from whisperapp.streaming import StreamingEngine
+        engine = StreamingEngine()
+        engine._model = MagicMock()
+        engine._running = True
+        engine._accumulator.add_segment(0.0, 1.0, "Whole call so far")
+        result = engine.stop()
+        assert result["text"] == "Whole call so far"
+        assert result["final_text"] == ""
 
     @patch("whisperx.assign_word_speakers")
     @patch("whisperx.align")

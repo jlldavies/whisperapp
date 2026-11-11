@@ -44,9 +44,12 @@ export const api = {
 
   // Transcribe
   transcribe: (body)   => req('POST', '/transcribe', body),
-  upload: async (file) => {
+  // Saved into outputPath (the job's output folder) under the file's own
+  // name, so the audio/video is kept next to its transcripts.
+  upload: async (file, outputPath) => {
     const fd = new FormData();
     fd.append('file', file);
+    if (outputPath) fd.append('output_path', outputPath);
     const r = await fetch(API + '/upload', { method: 'POST', body: fd });
     if (!r.ok) throw new Error('Upload failed');
     return r.json();

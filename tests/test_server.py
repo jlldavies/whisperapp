@@ -1,4 +1,5 @@
 import base64
+from pathlib import Path
 import pytest
 import numpy as np
 from unittest.mock import patch, MagicMock
@@ -249,6 +250,9 @@ async def test_stream_stop_response_includes_audio_path(app_and_queue, tmp_path,
             assert resp.status_code == 200
             body = resp.json()
             assert "audio_path" in body
+            # Only the stop-flush tail goes to the UI to append; the mock has none.
+            assert body["final_text"] == ""
+            assert body["text"] == "Hello"
             # audio_path is either a str path or None (None if soundfile not available)
             if body["audio_path"] is not None:
                 import os
@@ -635,31 +639,69 @@ async def test_get_audio_devices(app):
     assert r.status_code == 200
     assert isinstance(r.json(), list)
 
+async def _upload(app, name, data, out_dir):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        return await c.post("/upload", files={"file": (name, data, "audio/wav")},
+                            data={"output_path": str(out_dir)})
+
+
 @pytest.mark.asyncio
-async def test_upload_file(app, tmp_path):
+async def test_upload_keeps_media_in_output_dir_under_its_own_name(app, tmp_path):
+    """The audio/video is kept next to its transcripts, named as the user named it."""
     fake_audio = b"RIFF" + b"\x00" * 100
-    with patch("whisperapp.server._config_dir", return_value=tmp_path):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            r = await c.post("/upload", files={"file": ("test.wav", fake_audio, "audio/wav")})
+    r = await _upload(app, "Client call 11 Nov.mp4", fake_audio, tmp_path)
     assert r.status_code == 200
-    assert "path" in r.json()
+    saved = Path(r.json()["path"])
+    assert saved == tmp_path / "Client call 11 Nov.mp4"
+    assert saved.read_bytes() == fake_audio
+    assert not list(tmp_path.glob("*.part")) and not list(tmp_path.glob(".*.part"))
 
 
 @pytest.mark.asyncio
 async def test_upload_file_suffix_allowlist(app, tmp_path):
     """Disallowed extension is replaced with .audio; allowed extensions are kept."""
     fake_audio = b"\x00" * 64
-    with patch("whisperapp.server._config_dir", return_value=tmp_path):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            # Disallowed extension → .audio
-            r = await c.post("/upload", files={"file": ("evil.exe", fake_audio, "application/octet-stream")})
-            assert r.status_code == 200
-            assert r.json()["path"].endswith(".audio")
+    r = await _upload(app, "evil.exe", fake_audio, tmp_path)
+    assert r.status_code == 200
+    assert r.json()["path"].endswith("evil.audio")
 
-            # Allowed extension → preserved
-            r = await c.post("/upload", files={"file": ("clip.mp3", fake_audio, "audio/mpeg")})
-            assert r.status_code == 200
-            assert r.json()["path"].endswith(".mp3")
+    r = await _upload(app, "clip.mp3", fake_audio, tmp_path)
+    assert r.status_code == 200
+    assert r.json()["path"].endswith("clip.mp3")
+
+
+@pytest.mark.asyncio
+async def test_upload_never_overwrites_a_different_file(app, tmp_path):
+    (tmp_path / "call.wav").write_bytes(b"original")
+    r = await _upload(app, "call.wav", b"different", tmp_path)
+    assert Path(r.json()["path"]) == tmp_path / "call (1).wav"
+    assert (tmp_path / "call.wav").read_bytes() == b"original"
+    assert (tmp_path / "call (1).wav").read_bytes() == b"different"
+
+
+@pytest.mark.asyncio
+async def test_upload_reuses_identical_file_already_there(app, tmp_path):
+    """Picking a file from the output folder itself must not duplicate it."""
+    out = tmp_path / "out"   # tmp_path itself also holds the fixture's jobs.db
+    out.mkdir()
+    (out / "call.wav").write_bytes(b"same bytes")
+    r = await _upload(app, "call.wav", b"same bytes", out)
+    assert Path(r.json()["path"]) == out / "call.wav"
+    assert sorted(p.name for p in out.iterdir()) == ["call.wav"]
+
+
+@pytest.mark.asyncio
+async def test_upload_strips_path_and_unsafe_chars_from_name(app, tmp_path):
+    r = await _upload(app, "..\\..\\evil:na*me?.wav", b"x", tmp_path)
+    saved = Path(r.json()["path"])
+    assert saved.parent == tmp_path
+    assert saved.name == "evil_na_me_.wav"
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_traversal_in_output_path(app, tmp_path):
+    r = await _upload(app, "a.wav", b"x", str(tmp_path / ".." / "elsewhere"))
+    assert r.status_code == 422
 
 
 # ---------------------------------------------------------------------------

@@ -507,8 +507,10 @@ async function stopRecording(container) {
   if (sid) {
     try {
       const result = await api.streamStop({ session_id: sid, formats: [..._liveFmts] });
-      if (result && result.text && result.text.trim()) {
-        _transcript.push({ id: _segIdCounter++, t: formatTime(_elapsed), txt: result.text.trim(), speaker: null, review: false });
+      // Append only the tail flushed at stop. result.text is the whole call,
+      // which is already on screen chunk by chunk.
+      if (result && result.final_text && result.final_text.trim()) {
+        _transcript.push({ id: _segIdCounter++, t: formatTime(_elapsed), txt: result.final_text.trim(), speaker: null, review: false });
         updateTranscriptUI(container);
       }
       if (result && result.audio_path) {

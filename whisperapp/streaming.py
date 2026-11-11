@@ -315,10 +315,13 @@ class StreamingEngine:
         self._running = False
         logger.info("StreamingEngine stopping — flushing remaining buffer")
 
-        # Flush any remaining buffered audio
+        # Flush any remaining buffered audio. Its text is returned separately as
+        # "final_text": "text" is the WHOLE transcript, which a client that has
+        # already shown every chunk must not append again.
+        final_text = ""
         remaining = self._buffer.get_all()
         if remaining is not None and len(remaining) >= 8000:  # at least 0.5s
-            self._transcribe_utterance(remaining)
+            final_text = self._transcribe_utterance(remaining) or ""
 
         # Concatenate all raw audio for Polish step
         raw_audio = (
@@ -333,6 +336,7 @@ class StreamingEngine:
                     len(segs), len(text.split()) if text else 0, len(raw_audio) / 16000)
         return {
             "text": text,
+            "final_text": final_text,
             "segments": segs,
             "raw_audio": raw_audio,
             "sample_rate": 16000,
